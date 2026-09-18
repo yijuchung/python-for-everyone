@@ -7,9 +7,10 @@
   `data-root` is the relative path back to the repo root from that page's
   location (e.g. "" for index.html, "../../" for a chapter's lesson.html).
 
-  The current page's chapter can be highlighted by setting
-  `data-active-chapter="chapter-02"` on <body>. Completion checkmarks are
-  read from assets/progress.js's localStorage-backed tracker, if loaded.
+  Set `data-active-chapter="chapter-02"` on <body> to highlight, expand,
+  and reveal the current chapter, including after Back/Forward navigation.
+  Completion checkmarks are read from assets/progress.js's
+  localStorage-backed tracker, if loaded.
 */
 
 (function () {
@@ -30,15 +31,16 @@
 
     modules.forEach((mod, index) => {
       const containsActive = mod.chapters.some((c) => c.id === activeChapter);
-      const isOpen = containsActive || index === 0 ? "open" : "";
+      const isOpen = containsActive || (!activeChapter && index === 0) ? "open" : "";
       html += `<details class="sidebar-module" ${isOpen}><summary>${escapeHtml(mod.title)}</summary>`;
       html += `<ul class="sidebar-chapter-list">`;
       mod.chapters.forEach((ch) => {
-        const activeClass = ch.id === activeChapter ? "active" : "";
+        const isActive = ch.id === activeChapter;
+        const activeClass = isActive ? "active" : "";
         if (ch.path) {
           const check = isComplete(ch.id) ? `<span class="sidebar-check">✓</span>` : `<span>${ch.num}.</span>`;
           html += `<li class="${activeClass}"><a href="${root}${ch.path}">${check} ${escapeHtml(ch.title)}</a>`;
-          if (ch.subtopics && ch.subtopics.length) {
+          if (isActive && ch.subtopics && ch.subtopics.length) {
             html += `<ul class="sidebar-subtopic-list">`;
             ch.subtopics.forEach((sub) => {
               html += `<li><a href="${root}${ch.path}#${sub.id}">${escapeHtml(sub.title)}</a></li>`;
@@ -60,6 +62,21 @@
     return html;
   }
 
+  function revealActiveChapter(sidebar) {
+    const activeLink = sidebar.querySelector(".sidebar-chapter-list > li.active > a");
+    if (!activeLink) return;
+
+    sidebar.querySelectorAll(".sidebar-module").forEach((mod) => {
+      mod.open = mod.contains(activeLink);
+    });
+
+    const sidebarBounds = sidebar.getBoundingClientRect();
+    const linkBounds = activeLink.getBoundingClientRect();
+    // Scroll only the sidebar, preserving the lesson's scroll and keyboard focus.
+    sidebar.scrollTop += linkBounds.top - sidebarBounds.top
+      - (sidebar.clientHeight - linkBounds.height) / 2;
+  }
+
   function wireMobileToggle() {
     const sidebar = document.getElementById("chapter-sidebar");
     const toggle = document.getElementById("sidebar-toggle");
@@ -70,6 +87,7 @@
       sidebar.classList.add("open");
       scrim.classList.add("show");
       toggle.setAttribute("aria-expanded", "true");
+      revealActiveChapter(sidebar);
     }
     function close() {
       sidebar.classList.remove("open");
@@ -89,6 +107,11 @@
     const activeChapter = document.body.getAttribute("data-active-chapter") || "";
     sidebar.innerHTML = buildSidebarHtml(root, activeChapter);
     wireMobileToggle();
+    revealActiveChapter(sidebar);
+    window.addEventListener("pageshow", () => {
+      // Run after the browser restores cached sidebar scroll/expansion state.
+      requestAnimationFrame(() => revealActiveChapter(sidebar));
+    });
   }
 
   if (document.readyState === "loading") {
