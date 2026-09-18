@@ -50,9 +50,9 @@
       <span class="mcq-feedback" aria-live="polite"></span>
     </div>
     <div class="quiz-question mcq-question">
-      <label id="mcq2-label"><span class="q-num">2</span> Threading speeds up which kind of work?</label>
+      <label id="mcq2-label"><span class="q-num">2</span> In a GIL-enabled CPython interpreter, which work is usually a good fit for a thread pool?</label>
       <div class="mcq-options" role="group" aria-labelledby="mcq2-label">
-        <button type="button" class="mcq-option" data-correct="false">CPU-bound work, like crunching numbers in a tight loop</button>
+        <button type="button" class="mcq-option" data-correct="false">Pure-Python CPU-bound work, like crunching numbers in a tight loop</button>
         <button type="button" class="mcq-option" data-correct="true">I/O-bound work, like waiting on a network response or disk read</button>
         <button type="button" class="mcq-option" data-correct="false">Neither kind of work benefits from threading in Python</button>
       </div>
@@ -80,7 +80,7 @@
       <label id="mcq5-label"><span class="q-num">5</span> What is the GIL?</label>
       <div class="mcq-options" role="group" aria-labelledby="mcq5-label">
         <button type="button" class="mcq-option" data-correct="false">A tool for managing files across threads</button>
-        <button type="button" class="mcq-option" data-correct="true">A lock in CPython that allows only one thread to execute Python bytecode at a time</button>
+        <button type="button" class="mcq-option" data-correct="true">A lock that, when enabled, lets only one thread in a CPython interpreter execute Python bytecode at a time</button>
         <button type="button" class="mcq-option" data-correct="false">A type of error raised when two threads conflict</button>
       </div>
       <span class="mcq-feedback" aria-live="polite"></span>
@@ -152,7 +152,7 @@
       <label id="mcq13-label"><span class="q-num">13</span> What is a <code>Future</code>, as returned by <code>pool.submit()</code>?</label>
       <div class="mcq-options" role="group" aria-labelledby="mcq13-label">
         <button type="button" class="mcq-option" data-correct="false">The actual return value of the submitted function, available immediately</button>
-        <button type="button" class="mcq-option" data-correct="true">An object representing a result that doesn't exist yet, but will once the task finishes</button>
+        <button type="button" class="mcq-option" data-correct="true">An object tracking a scheduled task's state and eventual result or exception</button>
         <button type="button" class="mcq-option" data-correct="false">A special kind of thread that runs faster than normal threads</button>
       </div>
       <span class="mcq-feedback" aria-live="polite"></span>
@@ -185,7 +185,7 @@
       </div>
     </div>
     <div class="quiz-question">
-      <label for="q17"><span class="q-num">17</span> The <code>____</code> (Global Interpreter Lock) allows only one thread to run Python bytecode at a time.</label>
+      <label for="q17"><span class="q-num">17</span> When enabled, the <code>____</code> (Global Interpreter Lock) allows only one thread in a CPython interpreter to run Python bytecode at a time.</label>
       <div class="fib-row">
         <input type="text" id="q17" class="fib-blank" data-answers="GIL,gil" aria-label="Answer for question 17">
         <button type="button" class="check-btn">Check</button>
@@ -212,6 +212,49 @@
       <label for="q20"><span class="q-num">20</span> A ____ condition happens when multiple threads read and write shared mutable state without coordination.</label>
       <div class="fib-row">
         <input type="text" id="q20" class="fib-blank" data-answers="race" aria-label="Answer for question 20">
+        <button type="button" class="check-btn">Check</button>
+        <span class="fib-feedback" aria-live="polite"></span>
+      </div>
+    </div>
+
+    <div class="quiz-question mcq-question">
+      <label id="mcq21-label"><span class="q-num">21</span> Which executor can run independent, substantial pure-Python CPU tasks on multiple available cores without disabling the GIL?</label>
+      <div class="mcq-options" role="group" aria-labelledby="mcq21-label">
+        <button type="button" class="mcq-option" data-correct="false">ThreadPoolExecutor, because more threads remove the GIL</button>
+        <button type="button" class="mcq-option" data-correct="true">ProcessPoolExecutor, because workers have separate interpreters and GILs</button>
+        <button type="button" class="mcq-option" data-correct="false">Neither — the GIL is shared by every Python process on the machine</button>
+      </div>
+      <span class="mcq-feedback" aria-live="polite"></span>
+    </div>
+    <div class="quiz-question mcq-question">
+      <label id="mcq22-label"><span class="q-num">22</span> Which statement about free-threaded CPython 3.14 is correct?</label>
+      <div class="mcq-options" role="group" aria-labelledby="mcq22-label">
+        <button type="button" class="mcq-option" data-correct="false">Every Python 3.14 installation disables the GIL automatically</button>
+        <button type="button" class="mcq-option" data-correct="true">It is supported but optional, and shared mutable state still needs synchronization</button>
+        <button type="button" class="mcq-option" data-correct="false">Removing the GIL guarantees faster execution and eliminates race conditions</button>
+      </div>
+      <span class="mcq-feedback" aria-live="polite"></span>
+    </div>
+    <div class="quiz-question">
+      <label for="q23"><span class="q-num">23</span> Protect a process-pool script's startup with <code>if __name__ == "____":</code> so worker imports do not start more pools.</label>
+      <div class="fib-row">
+        <input type="text" id="q23" class="fib-blank" data-answers="__main__" aria-label="Answer for question 23">
+        <button type="button" class="check-btn">Check</button>
+        <span class="fib-feedback" aria-live="polite"></span>
+      </div>
+    </div>
+    <div class="quiz-question">
+      <label for="q24"><span class="q-num">24</span> Process-pool arguments and results must be ____ so Python can serialize them for transfer between processes.</label>
+      <div class="fib-row">
+        <input type="text" id="q24" class="fib-blank" data-answers="picklable,pickleable" aria-label="Answer for question 24">
+        <button type="button" class="check-btn">Check</button>
+        <span class="fib-feedback" aria-live="polite"></span>
+      </div>
+    </div>
+    <div class="quiz-question">
+      <label for="q25"><span class="q-num">25</span> Calling <code>future.____()</code> returns a worker's value or raises its exception in the caller.</label>
+      <div class="fib-row">
+        <input type="text" id="q25" class="fib-blank" data-answers="result" aria-label="Answer for question 25">
         <button type="button" class="check-btn">Check</button>
         <span class="fib-feedback" aria-live="polite"></span>
       </div>

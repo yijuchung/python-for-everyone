@@ -26,8 +26,10 @@ what would calling it on a response that isn't actually JSON cause?
 **A4.** Why does `dict.get("key", default)` help avoid a common bug when
 working with data parsed from JSON, compared to `data["key"]`?
 
-**A5.** What does the GIL (Global Interpreter Lock) actually prevent, and
-why does that still leave threading useful for I/O-bound work?
+**A5.** In a GIL-enabled CPython interpreter, what does the GIL actually
+prevent, and why does that still leave threading useful for I/O-bound
+work? Name an executor that can run independent CPU-heavy Python tasks
+on multiple available cores without disabling the GIL.
 
 **A6.** Why is `counter += 1` not automatically safe to run from
 multiple threads at once, even though it looks like a single operation?
@@ -113,13 +115,17 @@ on every response. `dict.get("key", default)` returns `default` instead
 of crashing when the key is missing, letting a program handle a missing
 field gracefully rather than failing outright.
 
-**A5.** The GIL prevents more than one thread from executing Python
-bytecode at the exact same instant, even on a multi-core machine — so
-multiple Python threads never truly run Python code in parallel on
-separate cores. Threading still helps I/O-bound work because a thread
-waiting on I/O (network, disk, `time.sleep()`) releases the GIL for the
-duration of that wait, letting another thread run during it — the
-benefit comes from overlapping waits, not from simultaneous computation.
+**A5.** In one GIL-enabled CPython interpreter, only one thread executes
+Python bytecode at a time. CPU-bound Python threads periodically take
+turns and both progress; the limitation is serialized execution, not one
+thread starving all others. Blocking I/O (network, disk, `time.sleep()`)
+releases the GIL while waiting, allowing those waits to overlap.
+`ProcessPoolExecutor` uses separate worker interpreters and GILs, so
+independent CPU-heavy tasks can execute on multiple available cores;
+startup and data-transfer costs still matter. Native code that releases
+the GIL and optional free-threaded CPython are exceptions to the general
+threading limitation. The free-threaded build was experimental in 3.13
+and became supported but optional in 3.14; it is not the default build.
 
 **A6.** `counter += 1` is really three separate steps under the hood:
 read the current value, add 1 to it, and write the new value back. The

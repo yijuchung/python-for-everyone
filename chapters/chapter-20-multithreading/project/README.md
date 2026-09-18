@@ -197,12 +197,13 @@ completion message. Menu options: resize a chosen batch sequentially, and
 resize the same batch concurrently, comparing total time both ways.
 
 **Suggested approach:** This is a good candidate for pointing out the
-GIL's real limits explicitly in your own README &mdash; note that a
-*real* image resize is CPU-bound (actual pixel computation), so a
-real version of this tool would see far less benefit from threading than
-this I/O-bound simulation shows; a real implementation would likely reach
-for `multiprocessing` instead. Simulating it with `time.sleep()` is
-intentionally showing the I/O-bound case this chapter focuses on.
+GIL's real limits explicitly in your own README. Pure-Python pixel
+computation cannot run in parallel on threads sharing an enabled GIL;
+independent resizing jobs may suit `ProcessPoolExecutor`. A native image
+library that releases the GIL, or a compatible free-threaded build, may
+benefit from threads instead. Measure the real implementation rather than
+assuming all image processing behaves alike. This `time.sleep()` simulator
+only demonstrates overlapping waits, not faster CPU computation.
 
 ### 3. Multi-Sensor Data Collector Simulator
 

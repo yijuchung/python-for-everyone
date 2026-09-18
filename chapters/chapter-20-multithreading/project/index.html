@@ -159,7 +159,7 @@ Goodbye!</code></pre>
     <h3><span class="task-num">2</span> Parallel Image-Resize Simulator</h3>
     <p><strong>Problem:</strong> A photo tool needs to "resize" a batch of images, and wants to compare doing that one at a time versus concurrently.</p>
     <p><strong>What it should do:</strong> Build a small list of mocked image filenames with a fake "processing time" per image, plus <code>resize_image(filename, results_list, lock)</code> that sleeps for that image's processing time and safely records a completion message. Menu options: resize a chosen batch sequentially, and resize the same batch concurrently, comparing total time both ways.</p>
-    <p><strong>Suggested approach:</strong> This is a good candidate for pointing out the GIL's real limits explicitly in your own README &mdash; note that a <em>real</em> image resize is CPU-bound (actual pixel computation), so a real version of this tool would see far less benefit from threading than this I/O-bound simulation shows; a real implementation would likely reach for <code>multiprocessing</code> instead. Simulating it with <code>time.sleep()</code> is intentionally showing the I/O-bound case this chapter focuses on.</p>
+    <p><strong>Suggested approach:</strong> Explain the GIL's real limits in your README. Pure-Python pixel computation cannot run in parallel on threads sharing an enabled GIL; independent jobs may suit <code>ProcessPoolExecutor</code>. A native image library that releases the GIL, or a compatible free-threaded build, may benefit from threads instead. Measure the real implementation. This <code>time.sleep()</code> simulator only demonstrates overlapping waits, not faster CPU computation.</p>
   </div>
 
   <div class="task-card">

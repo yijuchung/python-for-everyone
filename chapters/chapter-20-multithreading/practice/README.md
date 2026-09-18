@@ -4,11 +4,12 @@ A deeper set of practice problems, organized by topic, on top of the main
 `exercises/` folder — including scenario-based problems written in the
 same style you'll see in real interviews. This is the chapter where
 `threading`, `threading.Lock`, `threading.local`, and
-`concurrent.futures.ThreadPoolExecutor` become allowed, on top of
+`concurrent.futures.ThreadPoolExecutor` and `ProcessPoolExecutor` become allowed, on top of
 everything from Chapters 1-19. Every "wait" here uses `time.sleep()` to
 stand in for a slow network or disk operation — no real network access
-or file I/O happens anywhere in this folder. No import beyond
-`json`/`os`/`re`/`math`/`datetime`/`random`/`csv`/`threading`/`concurrent.futures`.
+or application-data file I/O is needed. The process-pool tasks do actual
+CPU work instead of sleeping. No import beyond
+`json`/`os`/`re`/`math`/`datetime`/`random`/`csv`/`time`/`threading`/`concurrent.futures`.
 
 ## How to run
 
@@ -16,6 +17,13 @@ or file I/O happens anywhere in this folder. No import beyond
 cd practice
 python3 starter.py
 ```
+
+Use `python` instead of `python3` if that is your local command. Run the
+saved script, not a notebook, interactive shell, or browser playground:
+process workers need an importable module. Define workers at module
+level and put all demonstration calls inside `main()`, which is called
+only under `if __name__ == "__main__":`. Both files use this layout so
+fresh workers do not rerun the earlier threading demos during import.
 
 ## Topic 1: What a Thread Is, and I/O-Bound vs. CPU-Bound
 
@@ -37,11 +45,14 @@ python3 starter.py
 
 ## Topic 3: The GIL
 
-1. Identify which operations release the GIL during a wait.
-2. Decide whether threading would help a given kind of work.
-3. **Debug the Code:** fix a description of the GIL that claimed Python threads run fully in parallel.
-4. **Scenario — Explaining the GIL to a Teammate:** write `explain_gil_to_a_teammate()`.
-5. **Scenario — Interview Prep:** explain the GIL's practical impact on threading.
+Assume one GIL-enabled CPython interpreter and pure-Python CPU work for
+the simple classifiers; include the exceptions in the interview answer.
+
+1. Identify blocking waits that release the GIL. A CPU loop is not a wait, but still periodically hands off the GIL.
+2. Decide whether threading would help a given kind of work under those assumptions.
+3. **Debug the Code:** fix a claim that Python threads sharing an enabled GIL run bytecode fully in parallel.
+4. **Scenario — Explaining the GIL to a Teammate:** explain turn-taking rather than starvation, overlapping I/O waits, and separate process interpreters.
+5. **Scenario — Interview Prep:** include native code that releases the GIL and optional free-threaded CPython (experimental in 3.13, supported in 3.14), without dropping synchronization.
 
 ## Topic 4: Race Conditions
 
@@ -78,6 +89,19 @@ python3 starter.py
 4. **Debug the Code:** fix a pool that was never used as a context manager.
 5. **Scenario — Fetching Weather for Several Cities Concurrently:** write `fetch_all_weather(cities)`.
 6. **Scenario — Interview Prep:** explain what `ThreadPoolExecutor` offers over raw `Thread` objects.
+
+## Topic 8: `ProcessPoolExecutor`
+
+1. Write `choose_pool(work_type)` for GIL-enabled CPython: thread pool for I/O, process pool for independent CPU-heavy Python jobs; raise `ValueError` for an unknown label.
+2. Write the module-level `count_primes(limit)` worker and `count_all_primes(limits)` using a two-worker process pool and `.map()`. `[10, 20, 30]` should produce `[4, 8, 10]` in input order; `[]` should produce `[]`.
+3. Write `collect_prime_counts(limits)` with `.submit()`, `as_completed()`, and `.result()`. Return sorted `(limit, count)` results and sorted `(limit, message)` failures. For `[10, -1, 20]`, report `[(10, 4), (20, 8)]` and `[(-1, 'limit must be non-negative')]`; do not hide a failed task behind a count of zero.
+4. **Debug the Code:** replace an unpicklable lambda worker with the existing module-level `triple_val` function. Run the repaired call only from `main()`.
+5. **Scenario — Missing Report Results:** explain why a process worker's list updates do not change the parent's list, and why returning values is the right design.
+6. **Scenario — Interview Prep:** explain why tiny CPU jobs can be slower in a process pool, how to measure total cost, and why `sleep()` is not a CPU benchmark.
+
+The small inputs keep expected results easy to check; they are not a
+speedup benchmark. Worker functions, arguments, and results must be
+picklable, and a `threading.Lock` is not a process-sharing mechanism.
 
 ## Checking your work
 

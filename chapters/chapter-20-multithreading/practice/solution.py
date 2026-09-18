@@ -2,11 +2,12 @@
 Chapter 20 Practice Bank: Multithreading -- reference solution.
 See README.md in this folder for full instructions.
 Run this from inside the practice/ folder: python3 solution.py
+Run as a saved local script, not in the browser or an interactive shell.
 """
 
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 # ============================================================
 # Topic 1: What a thread is, and I/O-bound vs. CPU-bound
@@ -18,22 +19,15 @@ def is_io_bound(task_name):
     return task_name in io_tasks
 
 
-for name in ["download", "matrix_multiply", "api_call"]:
-    print(f"{name}: {'I/O-bound' if is_io_bound(name) else 'CPU-bound'}")
-
 # TODO 1.2
 def estimate_sequential_time(task_seconds):
     return sum(task_seconds)
 
 
-print(estimate_sequential_time([1, 1, 1]))
-
 # TODO 1.3
 def estimate_threaded_time(task_seconds):
     return max(task_seconds)
 
-
-print(estimate_threaded_time([1, 1, 1]))
 
 # TODO 1.4 (Debug the Code)
 # Bug: classify("download") returned "CPU-bound", exactly backwards --
@@ -43,8 +37,6 @@ def classify_fixed(name):
         return "I/O-bound"
     return "CPU-bound"
 
-
-print(classify_fixed("download"))
 
 # TODO 1.A (Scenario)
 def explain_why_threading_helps_downloads():
@@ -57,8 +49,6 @@ def explain_why_threading_helps_downloads():
     )
 
 
-print(explain_why_threading_helps_downloads())
-
 # TODO 1.B (Scenario -- Interview Prep)
 def explain_io_vs_cpu_bound():
     return (
@@ -66,13 +56,10 @@ def explain_io_vs_cpu_bound():
         "outside the CPU, like a network response or a disk read -- the "
         "CPU itself is idle during that wait, which is exactly the gap "
         "threading fills by overlapping several waits at once. CPU-bound "
-        "work spends most of its time actually computing, with nothing to "
-        "wait on, so adding more threads doesn't make one CPU compute any "
-        "faster."
+        "work spends most of its time computing. Pure-Python threads "
+        "sharing an enabled GIL take turns rather than computing in "
+        "parallel on multiple cores."
     )
-
-
-print(explain_io_vs_cpu_bound())
 
 
 # ============================================================
@@ -84,28 +71,11 @@ def append_double(n, results_list):
     results_list.append(n * 2)
 
 
-results = []
-threads = [threading.Thread(target=append_double, args=(n, results)) for n in [1, 2, 3]]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-print(sorted(results))
-
 # TODO 2.2
 def slow_greet(name, seconds, results_list):
     time.sleep(seconds)
     results_list.append(f"Hello, {name}!")
 
-
-greetings = []
-t1 = threading.Thread(target=slow_greet, args=("Ana", 0.02, greetings))
-t2 = threading.Thread(target=slow_greet, args=("Ben", 0.02, greetings))
-t1.start()
-t2.start()
-t1.join()
-t2.join()
-print(sorted(greetings))
 
 # TODO 2.3
 def count_threads_started(n):
@@ -116,8 +86,6 @@ def count_threads_started(n):
         t.join()
     return len(threads)
 
-
-print(count_threads_started(3))
 
 # TODO 2.4 (Debug the Code)
 # Bug: t.join() was called immediately after t.start() inside the same
@@ -135,8 +103,6 @@ def fixed_order():
     return results_list
 
 
-print(sorted(fixed_order()))
-
 # TODO 2.A (Scenario)
 def run_tasks_concurrently(task_fn, items, results_list):
     threads = [threading.Thread(target=task_fn, args=(item, results_list)) for item in items]
@@ -150,10 +116,6 @@ def run_tasks_concurrently(task_fn, items, results_list):
 def double_it(n, results_list):
     results_list.append(n * 2)
 
-
-out = []
-run_tasks_concurrently(double_it, [1, 2, 3], out)
-print(sorted(out))
 
 # TODO 2.B (Scenario -- Interview Prep)
 def explain_start_vs_join():
@@ -169,29 +131,22 @@ def explain_start_vs_join():
     )
 
 
-print(explain_start_vs_join())
-
-
 # ============================================================
 # Topic 3: The GIL
 # ============================================================
 
 # TODO 3.1
 def gil_releases_during(operation):
+    """Classify simulated blocking waits, not periodic CPU-thread handoffs."""
     io_operations = {"sleep", "network_call", "file_read", "database_query"}
     return operation in io_operations
 
 
-for op in ["sleep", "tight_math_loop", "network_call"]:
-    print(f"{op}: releases GIL = {gil_releases_during(op)}")
-
 # TODO 3.2
 def would_threading_help(work_type):
+    """Assume GIL-enabled CPython and pure-Python CPU work."""
     return "yes" if work_type == "I/O-bound" else "no"
 
-
-for wt in ["I/O-bound", "CPU-bound"]:
-    print(f"{wt}: threading helps? {would_threading_help(wt)}")
 
 # TODO 3.3 (Debug the Code)
 # Bug: claimed Python threads run fully in parallel on separate CPU
@@ -199,43 +154,37 @@ for wt in ["I/O-bound", "CPU-bound"]:
 # accurately.
 def explain_gil_right():
     return (
-        "The GIL allows only one thread to execute Python bytecode at a "
-        "time, even on a multi-core machine -- threads take turns, they "
-        "don't run Python code simultaneously on separate cores."
+        "When enabled, the GIL allows only one thread in a CPython "
+        "interpreter to execute Python bytecode at a time. CPU-bound "
+        "threads periodically take turns and both make progress, but "
+        "do not execute bytecode simultaneously in that interpreter."
     )
 
-
-print(explain_gil_right())
 
 # TODO 3.A (Scenario)
 def explain_gil_to_a_teammate():
     return (
-        "The GIL (Global Interpreter Lock) only lets one thread run "
-        "Python code at a time. A thread waiting on I/O (like a network "
-        "call) releases the GIL during that wait, letting another thread "
-        "run -- which is why threading speeds up I/O-bound work. A thread "
-        "doing pure computation barely releases the GIL at all, so "
-        "threading doesn't meaningfully speed up CPU-bound work."
+        "In GIL-enabled CPython, one thread per interpreter executes "
+        "Python bytecode at a time. Blocking I/O releases the GIL while "
+        "waiting; CPU-bound Python threads periodically take turns. "
+        "Both threads can make progress, but serialized bytecode "
+        "execution prevents multi-core computation in that interpreter. "
+        "Separate process-pool workers have separate interpreters and GILs."
     )
 
-
-print(explain_gil_to_a_teammate())
 
 # TODO 3.B (Scenario -- Interview Prep)
 def explain_gil_interview_answer():
     return (
-        "The GIL means multiple Python threads never execute Python "
-        "bytecode at the exact same instant, even on a multi-core "
-        "machine. This makes threading a poor fit for CPU-bound work, "
-        "since only one thread is ever actually computing at once. It "
-        "does not make threading useless overall, though -- a thread "
-        "waiting on I/O releases the GIL for that wait, so multiple "
-        "I/O-bound tasks can genuinely overlap even though only one "
-        "thread runs Python code at a time."
+        "The GIL serializes Python bytecode execution within one "
+        "GIL-enabled CPython interpreter, not all computation everywhere. "
+        "Blocking I/O overlaps, and native code that releases the GIL "
+        "may compute in parallel. Free-threaded CPython debuted as "
+        "experimental in 3.13 and became supported but optional in 3.14. "
+        "It permits parallel Python threads when the GIL is disabled, "
+        "but incompatible extensions may re-enable the GIL. Shared "
+        "mutable state still needs synchronization in either build."
     )
-
-
-print(explain_gil_interview_answer())
 
 
 # ============================================================
@@ -246,9 +195,6 @@ print(explain_gil_interview_answer())
 def has_race_risk(shared, mutated_by_multiple_threads):
     return shared and mutated_by_multiple_threads
 
-
-print(has_race_risk(True, True))
-print(has_race_risk(True, False))
 
 # TODO 4.2
 counter_41 = 0
@@ -262,19 +208,10 @@ def unsafe_increment(times):
         counter_41 = current + 1
 
 
-threads = [threading.Thread(target=unsafe_increment, args=(500,)) for _ in range(4)]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-print(f"Expected 2000, actual {counter_41} (varies -- a race condition)")
-
 # TODO 4.3
 def steps_in_plus_equals():
     return ["read the current value", "add to it", "write the new value back"]
 
-
-print(steps_in_plus_equals())
 
 # TODO 4.4 (Debug the Code)
 # Bug: claimed the GIL fully prevents race conditions, so no lock is ever
@@ -289,8 +226,6 @@ def explain_gil_prevents_races_right():
     )
 
 
-print(explain_gil_prevents_races_right())
-
 # TODO 4.A (Scenario)
 def diagnose_flaky_counter_bug():
     return (
@@ -303,8 +238,6 @@ def diagnose_flaky_counter_bug():
         "different runs."
     )
 
-
-print(diagnose_flaky_counter_bug())
 
 # TODO 4.B (Scenario -- Interview Prep)
 def explain_why_races_are_hard_to_catch():
@@ -319,9 +252,6 @@ def explain_why_races_are_hard_to_catch():
         "with a lock or a shared-nothing design, rather than assumed "
         "correct because a few test runs happened to succeed."
     )
-
-
-print(explain_why_races_are_hard_to_catch())
 
 
 # ============================================================
@@ -342,34 +272,16 @@ def safe_increment(times):
             counter_51 = current + 1
 
 
-threads = [threading.Thread(target=safe_increment, args=(500,)) for _ in range(4)]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-print(f"Expected 2000, got {counter_51}")
-
 # TODO 5.2
 def append_safely(item, shared_list, lock_obj):
     with lock_obj:
         shared_list.append(item)
 
 
-shared_52 = []
-lock_52 = threading.Lock()
-threads = [threading.Thread(target=append_safely, args=(n, shared_52, lock_52)) for n in [10, 20, 30]]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-print(sorted(shared_52))
-
 # TODO 5.3
 def with_lock_pattern_steps():
     return ["acquire the lock", "run the protected code", "release the lock automatically"]
 
-
-print(with_lock_pattern_steps())
 
 # TODO 5.4 (Debug the Code)
 # Bug: add_amount_broken() never actually uses lock_54, even though one
@@ -388,13 +300,6 @@ def add_amount_fixed(amount, times):
             total_54_fixed = current + amount
 
 
-threads = [threading.Thread(target=add_amount_fixed, args=(1, 500)) for _ in range(4)]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-print(f"fixed: expected 2000, got {total_54_fixed}")
-
 # TODO 5.A (Scenario)
 def build_thread_safe_logger():
     log_lines = []
@@ -406,14 +311,6 @@ def build_thread_safe_logger():
 
     return log, log_lines
 
-
-logger, log_lines = build_thread_safe_logger()
-threads = [threading.Thread(target=logger, args=(f"event {i}",)) for i in range(5)]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-print(len(log_lines))
 
 # TODO 5.B (Scenario -- Interview Prep)
 def explain_lock_tradeoff():
@@ -428,9 +325,6 @@ def explain_lock_tradeoff():
     )
 
 
-print(explain_lock_tradeoff())
-
-
 # ============================================================
 # Topic 6: Thread safety patterns
 # ============================================================
@@ -439,14 +333,6 @@ print(explain_lock_tradeoff())
 def compute_square(n, results_list):
     results_list.append(n * n)
 
-
-results_61 = []
-threads = [threading.Thread(target=compute_square, args=(n, results_61)) for n in [1, 2, 3, 4]]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-print(sum(results_61))
 
 # TODO 6.2
 def make_thread_local_counter():
@@ -460,10 +346,6 @@ def make_thread_local_counter():
 
     return increment
 
-
-inc = make_thread_local_counter()
-print(inc())
-print(inc())
 
 # TODO 6.3
 def sum_ranges_independently(ranges):
@@ -480,8 +362,6 @@ def sum_ranges_independently(ranges):
     return sum(results_list)
 
 
-print(sum_ranges_independently([range(1, 5), range(5, 10)]))
-
 # TODO 6.4 (Debug the Code)
 # Bug: multiple threads write to DIFFERENT keys of the same shared dict
 # with no lock, which is actually safe in CPython for simple assignment
@@ -494,18 +374,6 @@ def safe_shared_dict_write(key, value, shared_dict, lock_obj):
     with lock_obj:
         shared_dict[key] = value
 
-
-shared_dict_64 = {}
-dict_lock_64 = threading.Lock()
-threads = [
-    threading.Thread(target=safe_shared_dict_write, args=(f"k{i}", i, shared_dict_64, dict_lock_64))
-    for i in range(4)
-]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-print(len(shared_dict_64))
 
 # TODO 6.A (Scenario)
 def parallel_word_count(chunks):
@@ -522,8 +390,6 @@ def parallel_word_count(chunks):
     return sum(counts)
 
 
-print(parallel_word_count(["hello world", "python is fun", "threads are neat"]))
-
 # TODO 6.B (Scenario -- Interview Prep)
 def explain_shared_nothing_vs_locking():
     return (
@@ -538,9 +404,6 @@ def explain_shared_nothing_vs_locking():
     )
 
 
-print(explain_shared_nothing_vs_locking())
-
-
 # ============================================================
 # Topic 7: ThreadPoolExecutor
 # ============================================================
@@ -550,28 +413,17 @@ def double_val(n):
     return n * 2
 
 
-with ThreadPoolExecutor(max_workers=3) as pool:
-    results_71 = list(pool.map(double_val, [1, 2, 3]))
-print(results_71)
-
 # TODO 7.2
 def slow_square(n):
     time.sleep(0.01)
     return n * n
 
 
-with ThreadPoolExecutor(max_workers=3) as pool:
-    futures = [pool.submit(slow_square, n) for n in [1, 2, 3]]
-    results_72 = sorted(f.result() for f in as_completed(futures))
-print(results_72)
-
 # TODO 7.3
 def run_with_pool(fn, items, max_workers):
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         return list(pool.map(fn, items))
 
-
-print(run_with_pool(double_val, [4, 5, 6], 2))
 
 # TODO 7.4 (Debug the Code)
 # Bug: broken_pool_usage() created a ThreadPoolExecutor without ever using
@@ -588,8 +440,6 @@ def fixed_pool_usage():
     return results_list
 
 
-print(fixed_pool_usage())
-
 # TODO 7.A (Scenario)
 def fetch_all_weather(cities):
     def fetch_one(city):
@@ -599,8 +449,6 @@ def fetch_all_weather(cities):
     with ThreadPoolExecutor(max_workers=len(cities)) as pool:
         return list(pool.map(fetch_one, cities))
 
-
-print(fetch_all_weather(["Austin", "Reno", "Miami"]))
 
 # TODO 7.B (Scenario -- Interview Prep)
 def explain_threadpoolexecutor_benefits():
@@ -617,4 +465,237 @@ def explain_threadpoolexecutor_benefits():
     )
 
 
-print(explain_threadpoolexecutor_benefits())
+# ============================================================
+# Topic 8: ProcessPoolExecutor
+# ============================================================
+
+# TODO 8.1
+def choose_pool(work_type):
+    if work_type == "I/O-bound":
+        return "ThreadPoolExecutor"
+    if work_type == "CPU-bound":
+        return "ProcessPoolExecutor"
+    raise ValueError("work_type must be I/O-bound or CPU-bound")
+
+
+# TODO 8.2
+def count_primes(limit):
+    if limit < 0:
+        raise ValueError("limit must be non-negative")
+    count = 0
+    for number in range(2, limit):
+        is_prime = True
+        divisor = 2
+        while divisor * divisor <= number:
+            if number % divisor == 0:
+                is_prime = False
+                break
+            divisor += 1
+        if is_prime:
+            count += 1
+    return count
+
+
+def count_all_primes(limits):
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        return list(pool.map(count_primes, limits))
+
+
+# TODO 8.3
+def collect_prime_counts(limits):
+    results = []
+    failures = []
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        futures = {pool.submit(count_primes, limit): limit for limit in limits}
+        for future in as_completed(futures):
+            limit = futures[future]
+            try:
+                results.append((limit, future.result()))
+            except ValueError as error:
+                failures.append((limit, str(error)))
+    return sorted(results), sorted(failures)
+
+
+# TODO 8.4 (Debug the Code)
+# A lambda cannot be imported by process workers; reuse the top-level function.
+def fixed_process_pool(values):
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        return list(pool.map(triple_val, values))
+
+
+# TODO 8.A (Scenario)
+def explain_process_isolation():
+    return (
+        "A process worker has its own memory. Appending to an ordinary "
+        "list or updating a global there does not update the parent's "
+        "copy, and threading.Lock does not synchronize processes. Return "
+        "picklable results and combine them in the parent instead."
+    )
+
+
+# TODO 8.B (Scenario -- Interview Prep)
+def explain_process_pool_tradeoffs():
+    return (
+        "Independent CPU-heavy Python jobs can use multiple available "
+        "cores through separate process interpreters, even with the GIL "
+        "enabled. But starting workers, serializing and copying data, "
+        "and extra memory cost can outweigh tiny jobs. Reuse a bounded "
+        "pool, compare identical inputs and results, and time the whole "
+        "operation including startup and shutdown. Sleeping is an I/O "
+        "simulation, not evidence of faster CPU computation."
+    )
+
+
+# Spawned workers import this module; only the parent should run the demos.
+def main():
+    global counter_41, counter_51, total_54_fixed
+    counter_41 = 0
+    counter_51 = 0
+    total_54_fixed = 0
+
+    # Topic 1
+    for name in ["download", "matrix_multiply", "api_call"]:
+        print(f"{name}: {'I/O-bound' if is_io_bound(name) else 'CPU-bound'}")
+    print(estimate_sequential_time([1, 1, 1]))
+    print(estimate_threaded_time([1, 1, 1]))
+    print(classify_fixed("download"))
+    print(explain_why_threading_helps_downloads())
+    print(explain_io_vs_cpu_bound())
+
+    # Topic 2
+    results = []
+    threads = [threading.Thread(target=append_double, args=(n, results)) for n in [1, 2, 3]]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(sorted(results))
+
+    greetings = []
+    t1 = threading.Thread(target=slow_greet, args=("Ana", 0.02, greetings))
+    t2 = threading.Thread(target=slow_greet, args=("Ben", 0.02, greetings))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    print(sorted(greetings))
+    print(count_threads_started(3))
+    print(sorted(fixed_order()))
+
+    out = []
+    run_tasks_concurrently(double_it, [1, 2, 3], out)
+    print(sorted(out))
+    print(explain_start_vs_join())
+
+    # Topic 3
+    for op in ["sleep", "tight_math_loop", "network_call"]:
+        print(f"{op}: releases GIL while waiting = {gil_releases_during(op)}")
+    for wt in ["I/O-bound", "CPU-bound"]:
+        print(f"{wt}: threading helps? {would_threading_help(wt)}")
+    print(explain_gil_right())
+    print(explain_gil_to_a_teammate())
+    print(explain_gil_interview_answer())
+
+    # Topic 4
+    print(has_race_risk(True, True))
+    print(has_race_risk(True, False))
+    threads = [threading.Thread(target=unsafe_increment, args=(500,)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(f"Expected 2000, actual {counter_41} (varies -- a race condition)")
+    print(steps_in_plus_equals())
+    print(explain_gil_prevents_races_right())
+    print(diagnose_flaky_counter_bug())
+    print(explain_why_races_are_hard_to_catch())
+
+    # Topic 5
+    threads = [threading.Thread(target=safe_increment, args=(500,)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(f"Expected 2000, got {counter_51}")
+
+    shared_52 = []
+    lock_52 = threading.Lock()
+    threads = [threading.Thread(target=append_safely, args=(n, shared_52, lock_52)) for n in [10, 20, 30]]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(sorted(shared_52))
+    print(with_lock_pattern_steps())
+
+    threads = [threading.Thread(target=add_amount_fixed, args=(1, 500)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(f"fixed: expected 2000, got {total_54_fixed}")
+
+    logger, log_lines = build_thread_safe_logger()
+    threads = [threading.Thread(target=logger, args=(f"event {i}",)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(len(log_lines))
+    print(explain_lock_tradeoff())
+
+    # Topic 6
+    results_61 = []
+    threads = [threading.Thread(target=compute_square, args=(n, results_61)) for n in [1, 2, 3, 4]]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(sum(results_61))
+
+    inc = make_thread_local_counter()
+    print(inc())
+    print(inc())
+    print(sum_ranges_independently([range(1, 5), range(5, 10)]))
+
+    shared_dict_64 = {}
+    dict_lock_64 = threading.Lock()
+    threads = [
+        threading.Thread(target=safe_shared_dict_write, args=(f"k{i}", i, shared_dict_64, dict_lock_64))
+        for i in range(4)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(len(shared_dict_64))
+    print(parallel_word_count(["hello world", "python is fun", "threads are neat"]))
+    print(explain_shared_nothing_vs_locking())
+
+    # Topic 7
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        results_71 = list(pool.map(double_val, [1, 2, 3]))
+    print(results_71)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [pool.submit(slow_square, n) for n in [1, 2, 3]]
+        results_72 = sorted(f.result() for f in as_completed(futures))
+    print(results_72)
+    print(run_with_pool(double_val, [4, 5, 6], 2))
+    print(fixed_pool_usage())
+    print(fetch_all_weather(["Austin", "Reno", "Miami"]))
+    print(explain_threadpoolexecutor_benefits())
+
+    # Topic 8
+    print(choose_pool("I/O-bound"))
+    print(choose_pool("CPU-bound"))
+    print(count_all_primes([10, 20, 30]))
+    results, failures = collect_prime_counts([10, -1, 20])
+    print(f"Results: {results}")
+    print(f"Failures: {failures}")
+    print(fixed_process_pool([1, 2, 3]))
+    print(explain_process_isolation())
+    print(explain_process_pool_tradeoffs())
+
+
+if __name__ == "__main__":
+    main()

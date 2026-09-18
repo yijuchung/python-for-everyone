@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chapter 20: Multithreading — Python for Everyone</title>
-<meta name="description" content="Threads, the GIL, race conditions, threading.Lock, and concurrent.futures.ThreadPoolExecutor — why Python threading speeds up I/O-bound work like downloads and API calls, but not CPU-bound work, and how to share state between threads safely.">
+<meta name="description" content="Threads, the GIL and free-threaded CPython, race conditions, threading.Lock, ThreadPoolExecutor for I/O, and ProcessPoolExecutor for CPU-bound work — with portable process-pool examples and safe result collection.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐍</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -33,21 +33,23 @@
   <div class="page-meta">
     <span class="chapter-badge">Chapter 20 of 27</span>
     <span class="badge-difficulty">Intermediate</span>
-    <span class="reading-time">80 min read</span>
+    <span class="reading-time">90 min read</span>
   </div>
   <h1>Multithreading</h1>
-  <p><em>Every program so far has run one line at a time, from top to bottom. That's fine for pure computation, but a huge amount of real software spends most of its time <strong>waiting</strong> &mdash; for a file to download, a database to respond, an API to answer. <strong>Threading</strong> lets a program start several of those waits at the same time instead of one after another, which is exactly why a browser can load a dozen images at once instead of one at a time. This chapter builds threading's real mechanics: starting threads, the tradeoff Python's GIL creates, the race conditions that come with sharing data across threads, and the tools &mdash; <code>Lock</code> and <code>ThreadPoolExecutor</code> &mdash; that keep it safe.</em></p>
+  <p><em>Every program so far has run one line at a time, from top to bottom. That's fine for pure computation, but a huge amount of real software spends most of its time <strong>waiting</strong> &mdash; for a file to download, a database to respond, an API to answer. <strong>Threading</strong> lets a program overlap those waits. This chapter builds the mechanics of threads, explains the GIL and safe shared state, and introduces two higher-level tools: <code>ThreadPoolExecutor</code> for I/O-bound tasks and <code>ProcessPoolExecutor</code> for independent CPU-bound tasks.</em></p>
 
   <div class="lesson-hero">
     <h2>How to read this chapter</h2>
     <ul>
       <li><strong>Sub-topics 1-2 are the entry point:</strong> what a thread actually is, the I/O-bound vs. CPU-bound distinction that decides whether threading even helps, and the raw mechanics of <code>threading.Thread</code>, <code>.start()</code>, <code>.join()</code>.</li>
-      <li><strong>Sub-topic 3 is the honest caveat:</strong> the GIL (Global Interpreter Lock) &mdash; why Python threads speed up waiting but not crunching numbers.</li>
+      <li><strong>Sub-topic 3 is the honest caveat:</strong> the GIL (Global Interpreter Lock), why pure-Python computation takes turns in a GIL-enabled interpreter, and what optional free-threaded CPython changes.</li>
       <li><strong>Sub-topics 4-5 are the real danger and its fix:</strong> race conditions from shared mutable state, and <code>threading.Lock</code> to prevent them.</li>
       <li><strong>Sub-topic 6 is a broader habit:</strong> structuring code to avoid sharing mutable state in the first place, which avoids needing a lock at all.</li>
-      <li><strong>Sub-topic 7 is the modern, higher-level tool:</strong> <code>concurrent.futures.ThreadPoolExecutor</code>, which most real code reaches for instead of raw <code>Thread</code> objects.</li>
-      <li><strong>Sub-topic 8 ties it together</strong> with the real-world cases threading actually shows up in &mdash; concurrent downloads, concurrent API calls (ties back to Chapter 19), and parallel file processing.</li>
-      <li><strong>Every timing example uses <code>time.sleep()</code> to stand in for a slow network or disk operation.</strong> No example makes a real network call or writes a real file &mdash; this chapter simulates exactly the kind of waiting threading is built for, so every example runs identically and safely for every learner, every time.</li>
+      <li><strong>Sub-topic 7 is the modern, higher-level tool:</strong> <code>concurrent.futures.<wbr>ThreadPoolExecutor</code>, which most real code reaches for instead of raw <code>Thread</code> objects.</li>
+      <li><strong>Sub-topic 8 adds processes:</strong> <code>ProcessPoolExecutor</code> uses separate interpreters for CPU-bound work, with different memory and startup rules from threads.</li>
+      <li><strong>Sub-topic 9 ties it together</strong> with concurrent downloads, concurrent API calls (Chapter 19), and choosing a pool for file-processing workloads.</li>
+      <li><strong>The I/O examples use <code>time.sleep()</code> to simulate waiting; the process-pool example does actual computation.</strong> No example needs a network call or writes application data. Results are reproducible, but timings depend on the machine and workload.</li>
+      <li><strong>Run the process-pool example as a saved local <code>.py</code> file.</strong> The browser playground cannot launch Python worker processes; an interactive shell or notebook is not a substitute for an importable script.</li>
       <li><strong>Thread execution order can vary between runs &mdash; the chapter is built around that.</strong> Every graded example is deliberately designed so the <em>final</em> result is the same no matter which thread happens to run first.</li>
     </ul>
   </div>
@@ -61,7 +63,8 @@
     <a href="#threading-lock">5. <code>threading.Lock</code></a>
     <a href="#thread-safety-patterns">6. Thread safety patterns</a>
     <a href="#thread-pool-executor">7. <code>ThreadPoolExecutor</code></a>
-    <a href="#real-world-threading">8. Real-world threading</a>
+    <a href="#process-pool-executor">8. <code>ProcessPoolExecutor</code></a>
+    <a href="#real-world-threading">9. Real-world threading</a>
   </nav>
 
   <div class="hook">
@@ -69,19 +72,19 @@
   </div>
 
   <div class="subtopic" id="what-is-a-thread">
-    <span class="subtopic-label">Sub-topic 1 of 8</span>
+    <span class="subtopic-label">Sub-topic 1 of 9</span>
     <h2>1. What a thread is, and why it helps</h2>
     <div class="lesson-stack">
       <div class="lesson-pill">At a glance</div>
       <ul class="lesson-bullets">
         <li>A <strong>thread</strong> is a separate line of execution inside the same running program, able to run alongside other threads.</li>
         <li><strong>I/O-bound</strong> work spends most of its time waiting (network, disk, a database) &mdash; threading helps here.</li>
-        <li><strong>CPU-bound</strong> work spends most of its time actually computing &mdash; threading does not speed this up in Python (Sub-topic 3 explains exactly why).</li>
+        <li><strong>CPU-bound</strong> work spends most of its time computing &mdash; pure-Python code cannot run across multiple cores using threads in one GIL-enabled CPython interpreter (Sub-topic 3).</li>
       </ul>
     </div>
 
     <div class="lesson-note">
-      <strong>Why this matters:</strong> every other tool in this chapter only matters for the right kind of problem. Using threading on the wrong kind of work (CPU-bound) is a genuinely common mistake, and this distinction is the one thing to get right before writing any threading code at all.
+      <strong>Why this matters:</strong> choose a concurrency tool based on what the program spends time doing, not just how many tasks it has. Unless stated otherwise, the examples assume a single, GIL-enabled CPython interpreter; Sub-topic 3 explains the exceptions.
     </div>
 
     <div class="what-is">
@@ -137,21 +140,20 @@ At the same time (threaded):
 
     <ul class="lesson-bullets">
       <li>Threading helps when a program spends time waiting &mdash; downloads, API calls (Chapter 19), database queries, reading many files.</li>
-      <li>Threading does not help pure number-crunching in Python &mdash; more threads doesn't make one CPU compute any faster.</li>
-      <li>This chapter's examples use <code>time.sleep()</code> to simulate a wait, since it behaves exactly like waiting on the network without needing a real, possibly-flaky network call.</li>
+      <li>Threads cannot execute pure-Python number-crunching in parallel while they share an enabled GIL; separate processes can use multiple available cores.</li>
+      <li>The I/O examples use <code>time.sleep()</code> to simulate a wait without needing a real, possibly-flaky network call.</li>
     </ul>
 
     <details class="go-deeper">
       <summary>Go Deeper: what actually helps CPU-bound work, if not threads?</summary>
       <p>
-        Python's <code>multiprocessing</code> module runs code in separate
-        full processes instead of threads &mdash; each process gets its own
-        Python interpreter and its own CPU core to run on, which genuinely
-        speeds up CPU-bound work by spreading the actual computation across
-        multiple cores. It's a heavier tool (each process has its own
-        memory, so sharing data between them is more work than sharing
-        between threads) and outside this chapter's scope, but it's the
-        answer to "what do I use for CPU-bound work instead of threading?"
+        <a href="#process-pool-executor"><code>ProcessPoolExecutor</code>
+        (Sub-topic 8)</a> uses Python's <code>multiprocessing</code>
+        machinery to run tasks in separate processes. Each has its own
+        interpreter and memory, so their Python computations can run on
+        different available CPU cores. This is not a promise of speedup:
+        starting processes and transferring data may cost more than small
+        tasks save.
       </p>
     </details>
 
@@ -159,14 +161,14 @@ At the same time (threaded):
       <span class="label">Quick recap</span>
       <ul>
         <li>A thread is a separate line of execution inside the same program, sharing its memory with other threads.</li>
-        <li>I/O-bound work (waiting on network, disk, a database) benefits from threading; CPU-bound work (pure computation) does not.</li>
+        <li>Threads can overlap I/O waits; pure-Python CPU work needs a different approach for multi-core parallelism when the GIL is enabled.</li>
         <li>Overlapping several waits at once shrinks a program's total time toward the slowest single wait, rather than the sum of every wait.</li>
       </ul>
     </div>
   </div>
 
   <div class="subtopic" id="creating-threads">
-    <span class="subtopic-label">Sub-topic 2 of 8</span>
+    <span class="subtopic-label">Sub-topic 2 of 9</span>
     <h2>2. Creating and starting threads</h2>
     <div class="lesson-stack">
       <div class="lesson-pill">At a glance</div>
@@ -178,7 +180,7 @@ At the same time (threaded):
     </div>
 
     <div class="lesson-note">
-      <strong>Why this matters:</strong> <code>Thread</code>, <code>.start()</code>, and <code>.join()</code> are the three raw building blocks every other tool in this chapter (including <code>ThreadPoolExecutor</code> in Sub-topic 7) is built on top of &mdash; understanding them directly is what makes the higher-level tools feel like a shortcut rather than magic.
+      <strong>Why this matters:</strong> <code>Thread</code>, <code>.start()</code>, and <code>.join()</code> are the raw building blocks behind threaded code, including <code>ThreadPoolExecutor</code> in Sub-topic 7. Understanding them makes a thread pool feel like a shortcut rather than magic; a process pool uses separate processes instead.
     </div>
 
     <p>
@@ -358,96 +360,105 @@ print(sorted(results))</textarea>
   </div>
 
   <div class="subtopic" id="the-gil">
-    <span class="subtopic-label">Sub-topic 3 of 8</span>
+    <span class="subtopic-label">Sub-topic 3 of 9</span>
     <h2>3. The GIL</h2>
     <div class="lesson-stack">
       <div class="lesson-pill">At a glance</div>
       <ul class="lesson-bullets">
-        <li>The <strong>GIL</strong> (Global Interpreter Lock) allows only one thread at a time to actually execute Python bytecode, even on a multi-core machine.</li>
-        <li>A thread waiting on I/O releases the GIL during that wait, letting another thread run &mdash; this is exactly why threading speeds up I/O-bound work.</li>
-        <li>CPU-bound work never gives up the GIL for long, so extra threads doing pure computation don't run any faster in standard Python.</li>
+        <li>In a <strong>GIL-enabled CPython interpreter</strong>, only one thread executes Python bytecode at a time, even on a multi-core machine.</li>
+        <li>Blocking I/O and <code>time.sleep()</code> release the GIL while waiting, letting another thread run.</li>
+        <li>CPU-bound Python threads <strong>take turns</strong>. They can both make progress, but cannot execute bytecode simultaneously in that interpreter.</li>
+        <li>The GIL is not a Python-language requirement, and free-threaded CPython builds can run without it.</li>
       </ul>
     </div>
 
     <div class="lesson-note">
-      <strong>Why this matters:</strong> this is one of the most commonly asked Python interview questions, and getting it wrong ("Python threads don't run in parallel, so threading is pointless") throws away a genuinely useful tool for exactly the I/O-bound case this chapter is built around.
+      <strong>Why this matters:</strong> "Python threads never run in parallel" is too broad, and "the GIL makes threads safe" is wrong. A useful answer names the interpreter, whether its GIL is enabled, and what kind of work the threads do.
     </div>
 
     <div class="what-is">
-      <span class="label">What is... the GIL?</span>
-      The <strong>Global Interpreter Lock</strong> (GIL) is a lock built
-      into the standard Python interpreter (CPython) that only allows one
-      thread to execute Python bytecode at any given instant, no matter how
-      many CPU cores the machine has. It exists to keep Python's internal
-      memory management simple and safe by default &mdash; the tradeoff is
-      that multiple Python threads never truly run Python code
-      <em>simultaneously</em> on separate cores.
+      <span class="label">What is... CPython's GIL?</span>
+      <strong>CPython</strong> is the reference Python implementation used
+      by most installations. Its default build uses a
+      <strong>Global Interpreter Lock</strong> to protect interpreter
+      internals, including object reference counts. A thread must hold
+      that lock to execute Python bytecode, so only one thread in the
+      same interpreter can do so at a time. This does <em>not</em> make
+      your application's multi-step updates thread-safe.
     </div>
 
     <p>
-      That sounds like it should make threading useless &mdash; and for
-      pure computation, it very nearly does. The detail that changes
-      everything for I/O-bound work: a thread that's waiting on something
-      outside the CPU (a network response, a disk read, <code>time.sleep()</code>)
-      releases the GIL for the duration of that wait, letting a different
-      thread run during it.
+      The key distinction is between overlapping progress and simultaneous
+      execution:
     </p>
+
+    <div class="what-is">
+      <span class="label">What is... concurrency vs. parallelism?</span>
+      <strong>Concurrency</strong> means multiple tasks make progress over
+      overlapping periods of time, including by taking turns.
+      <strong>Parallelism</strong> means tasks execute at the same instant,
+      for example on different CPU cores. Concurrency does not require
+      parallel Python bytecode execution.
+    </div>
 
     <div class="output-block">
-      <span class="output-label">the GIL during an I/O wait vs. a CPU-bound loop</span>
-      <pre><code>I/O-bound (time.sleep, network, disk):
-Thread A: [holds GIL, briefly][--- waiting, GIL released ---][holds GIL again]
-Thread B:                     [--- runs here, holds GIL ----]
+      <span class="output-label">one GIL-enabled interpreter; schematic turns, not fixed time slots</span>
+      <pre><code>CPU-bound Python:
+Bytecode execution: [A works][B works][A works][B works]
+Both threads progress, but only one executes bytecode at a time.
 
-CPU-bound (a tight computation loop):
-Thread A: [-------------- holds GIL almost the whole time --------------]
-Thread B: [ barely runs at all -- A rarely lets go of the GIL long enough ]</code></pre>
+Blocking I/O:
+A waits without the GIL -> B can execute Python during A's wait.</code></pre>
     </div>
 
-    <p>
-      During <code>time.sleep()</code> specifically (and during a real
-      network call or file read), the thread genuinely isn't running any
-      Python bytecode at all &mdash; it's just waiting &mdash; so releasing
-      the GIL during that wait costs nothing and lets other threads make
-      real progress. A CPU-bound loop, by contrast, is running Python
-      bytecode continuously, so it only gives up the GIL for brief,
-      periodic intervals, leaving little room for another thread to
-      meaningfully progress. This is the entire reason Sub-topic 1's
-      I/O-bound vs. CPU-bound distinction matters as much as it does.
-    </p>
+    <ul class="lesson-bullets">
+      <li><strong>Waiting:</strong> blocking operations such as socket I/O, file I/O, and <code>time.sleep()</code> release the GIL. Another thread can use that otherwise-idle time.</li>
+      <li><strong>Computing in Python:</strong> CPython periodically allows other threads to acquire the GIL. The lack of multi-core speedup comes from serialized bytecode execution, not from one thread preventing all others from progressing. Switching threads adds overhead too.</li>
+      <li><strong>Computing in native code:</strong> some compiled extensions release the GIL during expensive operations. Those operations may run in parallel even in a GIL-enabled build &mdash; check the library's documentation rather than assuming every CPU-bound task behaves like a Python loop.</li>
+      <li><strong>Updating shared state:</strong> the GIL protects interpreter internals, not a whole read-modify-write sequence in your program. Use a lock or independent results (Sub-topics 4-6).</li>
+      <li><strong>Using processes:</strong> workers in <code>ProcessPoolExecutor</code> have separate interpreters and, on GIL-enabled builds, separate GILs. They can execute Python code on multiple available cores.</li>
+    </ul>
+
+    <div class="what-is">
+      <span class="label">What is... free-threaded CPython?</span>
+      A <strong>free-threaded build</strong> is a CPython build that can
+      run with the GIL disabled, allowing threads in one interpreter to
+      execute Python code in parallel. It is a different build option,
+      not something that every Python upgrade automatically enables.
+    </div>
 
     <ul class="lesson-bullets">
-      <li>The GIL means only one thread runs Python bytecode at a time, even with multiple CPU cores.</li>
-      <li>A thread waiting on I/O releases the GIL for that wait, which is exactly what lets other threads run concurrently during it.</li>
-      <li>A thread doing pure computation holds the GIL almost continuously, so more threads doing CPU-bound work don't meaningfully speed anything up.</li>
+      <li><strong>Python 3.13:</strong> introduced the optional, experimental free-threaded build.</li>
+      <li><strong>Python 3.14:</strong> free-threaded CPython became officially supported, but remains optional; the default build still uses the GIL.</li>
+      <li><strong>Compatibility still matters:</strong> an extension that does not support free threading can re-enable the GIL when imported. On CPython 3.13+, use <code>import sys</code>, then <code>sys._is_gil_enabled()</code> to check its current runtime state; version alone is not enough.</li>
+      <li><strong>Thread safety still matters:</strong> disabling the GIL does not remove races or make every workload faster. Protect shared mutable state and measure the actual workload.</li>
     </ul>
 
     <details class="go-deeper">
-      <summary>Go Deeper: is the GIL going away?</summary>
+      <summary>Go Deeper: checking your interpreter and the current guidance</summary>
       <p>
-        Recent CPython releases have introduced an experimental
-        "free-threaded" build that can run without the GIL at all, and this
-        is an active area of ongoing work in the Python project. As of this
-        writing it's still opt-in and not yet the default for most
-        production code, so the GIL's behavior described here is still the
-        practical reality for the vast majority of Python programs running
-        today &mdash; worth knowing the direction things are heading, but
-        not a reason to skip understanding how the GIL behaves right now.
+        <code>python -VV</code> identifies a free-threading build, but
+        the GIL can still be enabled at runtime in that build. See
+        <a href="https://docs.python.org/3.14/howto/free-threading-python.html">Python's free-threading guide</a>
+        for build and runtime checks, and
+        <a href="https://peps.python.org/pep-0779/">PEP 779</a> for the
+        supported-but-optional status in Python 3.14. You do not need a
+        free-threaded build to run this chapter's process-pool example.
       </p>
     </details>
 
     <div class="quick-recap">
       <span class="label">Quick recap</span>
       <ul>
-        <li>The GIL lets only one thread run Python bytecode at a time, regardless of CPU core count.</li>
-        <li>A thread waiting on I/O releases the GIL during that wait, letting other threads run &mdash; the reason threading helps I/O-bound work.</li>
-        <li>A CPU-bound thread rarely releases the GIL, so threading doesn't meaningfully speed up pure computation in standard Python.</li>
+        <li>With the GIL enabled, Python threads in one interpreter take turns executing bytecode; blocking I/O can overlap.</li>
+        <li>Native code that releases the GIL, separate processes, and free-threaded CPython are different routes to parallel computation.</li>
+        <li>Free-threaded CPython is optional, supported from 3.14, and still requires careful shared-state synchronization.</li>
       </ul>
     </div>
   </div>
 
   <div class="subtopic" id="race-conditions">
-    <span class="subtopic-label">Sub-topic 4 of 8</span>
+    <span class="subtopic-label">Sub-topic 4 of 9</span>
     <h2>4. Race conditions</h2>
     <div class="lesson-stack">
       <div class="lesson-pill">At a glance</div>
@@ -563,7 +574,7 @@ print(f"Expected 8000, got {counter} (a lower, inconsistent number -- lost updat
   </div>
 
   <div class="subtopic" id="threading-lock">
-    <span class="subtopic-label">Sub-topic 5 of 8</span>
+    <span class="subtopic-label">Sub-topic 5 of 9</span>
     <h2>5. <code>threading.Lock</code></h2>
     <div class="lesson-stack">
       <div class="lesson-pill">At a glance</div>
@@ -715,7 +726,7 @@ print(f"Expected 6000, got {total}")</textarea>
   </div>
 
   <div class="subtopic" id="thread-safety-patterns">
-    <span class="subtopic-label">Sub-topic 6 of 8</span>
+    <span class="subtopic-label">Sub-topic 6 of 9</span>
     <h2>6. Thread safety patterns</h2>
     <div class="lesson-stack">
       <div class="lesson-pill">At a glance</div>
@@ -832,8 +843,8 @@ Grand total: 2002000</code></pre>
   </div>
 
   <div class="subtopic" id="thread-pool-executor">
-    <span class="subtopic-label">Sub-topic 7 of 8</span>
-    <h2>7. <code>concurrent.futures.ThreadPoolExecutor</code></h2>
+    <span class="subtopic-label">Sub-topic 7 of 9</span>
+    <h2>7. <code>concurrent.futures.<wbr>ThreadPoolExecutor</code></h2>
     <div class="lesson-stack">
       <div class="lesson-pill">At a glance</div>
       <ul class="lesson-bullets">
@@ -852,8 +863,8 @@ Grand total: 2002000</code></pre>
       A <strong>thread pool</strong> is a fixed, reusable set of worker
       threads that a program hands pieces of work to, instead of creating
       and destroying a brand-new thread for every single task.
-      <code>ThreadPoolExecutor(max_workers=N)</code> creates a pool of
-      <code>N</code> worker threads and takes care of assigning submitted
+      <code>ThreadPoolExecutor(max_workers=N)</code> manages a pool of up
+      to <code>N</code> worker threads and takes care of assigning submitted
       work to whichever worker is free, entirely automatically.
     </div>
 
@@ -895,8 +906,9 @@ video.mp4 downloaded</code></pre>
     <p>
       No <code>Thread()</code>, <code>.start()</code>, <code>.join()</code>,
       or shared results list anywhere in sight &mdash; <code>pool.map()</code>
-      hands every item to the pool's workers, waits for all of them, and
-      returns the results as a list in the <em>same order as the input</em>
+      hands items to the pool's workers and returns an iterator.
+      <code>list(...)</code> consumes that iterator, waiting as needed and
+      collecting the results in the <em>same order as the input</em>
       <code>items</code>, regardless of which download actually finished
       first. That guaranteed ordering is exactly why this example needs no
       <code>sorted()</code> call the way Sub-topic 2's raw-<code>Thread</code>
@@ -917,12 +929,14 @@ video.mp4 downloaded</code></pre>
 
     <div class="what-is">
       <span class="label">What is... a <code>Future</code>?</span>
-      A <strong>future</strong> is an object representing a result that
-      doesn't exist yet, but will once its underlying task finishes.
+      A <strong>future</strong> tracks a scheduled task's state and its
+      eventual result or exception; the task may already be finished by
+      the time you inspect it.
       <code>pool.submit(fn, *args)</code> returns a <code>Future</code>
       immediately, without waiting for <code>fn</code> to actually run
       &mdash; calling <code>.result()</code> on that future later blocks
-      until the task is done and then returns its actual return value.
+      until the task is done and then returns its actual return value,
+      or raises the task's exception if it failed.
     </div>
 
     <div class="code-window">
@@ -970,8 +984,8 @@ video.mp4 downloaded</code></pre>
     </p>
 
     <ul class="lesson-bullets">
-      <li><code>ThreadPoolExecutor(max_workers=N)</code> manages a pool of <code>N</code> worker threads automatically.</li>
-      <li><code>.map(fn, items)</code> is the simplest option: results come back as a list, in input order.</li>
+      <li><code>ThreadPoolExecutor(max_workers=N)</code> manages a pool of up to <code>N</code> worker threads automatically.</li>
+      <li><code>.map(fn, items)</code> yields results in input order; use <code>list(...)</code> to collect them into a list. A task's exception is raised when its result is retrieved.</li>
       <li><code>.submit(fn, *args)</code> returns a <code>Future</code> immediately; <code>as_completed()</code> yields each one as its task finishes, in completion order rather than submission order.</li>
     </ul>
 
@@ -1020,15 +1034,178 @@ print(results)</textarea>
     </div>
   </div>
 
+  <div class="subtopic" id="process-pool-executor">
+    <span class="subtopic-label">Sub-topic 8 of 9</span>
+    <h2>8. <code>concurrent.futures.<wbr>ProcessPoolExecutor</code></h2>
+    <div class="lesson-stack">
+      <div class="lesson-pill">At a glance</div>
+      <ul class="lesson-bullets">
+        <li><code>ProcessPoolExecutor</code> runs tasks in separate worker processes, not threads sharing one interpreter.</li>
+        <li>Each worker has its own memory and interpreter, so independent Python computations can use multiple available CPU cores even with the GIL enabled.</li>
+        <li>The familiar <code>.map()</code>, <code>.submit()</code>, <code>Future.result()</code>, and <code>as_completed()</code> interface still applies.</li>
+        <li>Processes cost more to start and exchange data with. Use them for substantial, independent CPU work, not as an automatic upgrade from a thread pool.</li>
+      </ul>
+    </div>
+
+    <div class="lesson-note">
+      <strong>Why this matters:</strong> a report service evaluating many
+      independent numerical jobs needs more computation, not overlapping
+      sleeps. A process pool provides multi-core execution without requiring
+      a free-threaded Python installation.
+    </div>
+
+    <div class="what-is">
+      <span class="label">What is... a process pool?</span>
+      A <strong>process</strong> is an operating-system-managed running
+      program with its own memory. A <strong>process pool</strong> reuses
+      a bounded group of worker processes across tasks.
+      <code>ProcessPoolExecutor(max_workers=2)</code> uses at most two
+      worker processes; the operating system schedules them on available
+      cores, rather than reserving a dedicated core for each one.
+    </div>
+
+    <h3>Thread pool or process pool?</h3>
+    <ul class="lesson-bullets">
+      <li><strong>Mostly waiting:</strong> start with <code>ThreadPoolExecutor</code> for downloads, API calls, or other blocking I/O. Threads share memory and have relatively low startup overhead.</li>
+      <li><strong>Mostly Python computation, GIL enabled:</strong> consider <code>ProcessPoolExecutor</code> when the work splits into independent, sufficiently large jobs.</li>
+      <li><strong>Data sharing:</strong> threads can access the same objects. Process-pool arguments and results are transferred between separate memories; changing an ordinary list or global in a worker does not update the parent's copy. Return results and combine them in the parent.</li>
+      <li><strong>Exceptions to the rule:</strong> native libraries that release the GIL and free-threaded builds may benefit from threads for computation too. Measure the actual workload and check library support.</li>
+    </ul>
+
+    <div class="what-is">
+      <span class="label">What is... pickling?</span>
+      <strong>Pickling</strong> is Python's way of serializing objects into
+      bytes that can be reconstructed elsewhere. Process pools use it to
+      send tasks, arguments, and results between processes. Ordinary
+      numbers, strings, and containers of picklable values work; an open
+      file or a <code>threading.Lock</code> is not a suitable task argument.
+      You do not need to call <code>pickle</code> yourself.
+    </div>
+
+    <h3>A CPU-bound example: counting primes</h3>
+    <p>
+      Imagine a number-analysis service handling several independent
+      requests. This small worker counts primes below each requested limit.
+      It performs actual Python computation &mdash; no <code>sleep()</code>
+      &mdash; and returns an integer rather than modifying shared state.
+    </p>
+
+    <div class="lesson-note">
+      <strong>Run locally:</strong> save the complete example below as
+      <code>process_pool_demo.py</code>, then run
+      <code>python process_pool_demo.py</code> (or <code>python3</code>).
+      Do not paste it into the browser playground, a REPL, or a notebook:
+      workers need to import its module.
+    </div>
+
+    <div class="code-window">
+      <div class="code-window-bar">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <span class="filename">process_pool_demo.py</span>
+      </div>
+      <pre><code>from concurrent.futures import ProcessPoolExecutor
+
+def count_primes(limit):
+    if limit &lt; 0:
+        raise ValueError("limit must be non-negative")
+    count = 0
+    for number in range(2, limit):
+        is_prime = True
+        divisor = 2
+        while divisor * divisor &lt;= number:
+            if number % divisor == 0:
+                is_prime = False
+                break
+            divisor += 1
+        if is_prime:
+            count += 1
+    return count
+
+
+def main():
+    limits = [10000, 20000, 30000]
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        counts = list(pool.map(count_primes, limits))
+
+    for limit, count in zip(limits, counts):
+        print(f"Primes below {limit}: {count}")
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+    </div>
+
+    <div class="genai-prompt-box">
+      <p class="genai-thought"><strong>Thought process:</strong> Each request is independent CPU work, so separate processes can compute without sharing a GIL. Keep the worker importable, transfer only integers, and let the parent collect ordered results; guard the entry point so child imports do not start another pool.</p>
+      <div class="genai-try-first">
+        <p class="genai-prompt-label">Write the prompt you'd give an AI assistant to build this:</p>
+        <textarea class="genai-user-attempt" rows="3" placeholder="Describe the CPU task, process startup rules, and required output."></textarea>
+        <button type="button" class="genai-reveal-btn">Reveal a strong reference prompt</button>
+        <div class="genai-compare-note" hidden>
+          Paste your prompt into an AI assistant and compare its result
+          against the example. Does it actually follow the process startup
+          and result-collection rules?
+        </div>
+      </div>
+      <details class="genai-reveal">
+        <summary>Show a strong version of this prompt</summary>
+        <div class="genai-prompt-text"><pre>Write a standalone standard-library Python script with a module-level count_primes(limit) function that counts primes strictly below an integer limit. Return 0 for limits 0, 1, and 2, and raise ValueError for a negative limit. Use simple trial division, not sleep or network calls. In main(), use a ProcessPoolExecutor context manager with max_workers=2 and map() for [10000, 20000, 30000]. Print "Primes below {limit}: {count}" in input order. Protect main() with if __name__ == "__main__" so it works with Windows process spawning. Do not use lambdas, nested workers, shared globals for results, or claim a guaranteed speedup.</pre></div>
+      </details>
+    </div>
+
+    <div class="output-block">
+      <span class="output-label">output of process_pool_demo.py; independent of completion order</span>
+      <pre><code>Primes below 10000: 1229
+Primes below 20000: 2262
+Primes below 30000: 3245</code></pre>
+    </div>
+
+    <h3>The portability rules are part of the example</h3>
+    <ul class="lesson-bullets">
+      <li><strong>Keep workers at module level:</strong> <code>count_primes</code> is outside <code>main()</code> and outside the guard, so child processes can import it. Lambdas and nested functions are not suitable process-pool workers with standard pickling.</li>
+      <li><strong>Guard program startup:</strong> <code>if __name__ == "__main__":</code> calls <code>main()</code> only in the original script run. Fresh worker interpreters may import the script; unguarded pool creation could recursively start processes. Keep all demo runs and side effects behind the guard, not just the pool's constructor.</li>
+      <li><strong>Keep data portable:</strong> both the integer arguments and integer results are picklable. A worker updating its own global counter would not update a counter in the parent, and <code>threading.Lock</code> does not synchronize separate processes.</li>
+      <li><strong>Use the context manager:</strong> leaving <code>with ProcessPoolExecutor(...) as pool:</code> waits for pending work and releases worker resources, including when an exception leaves the block.</li>
+    </ul>
+
+    <h3>The same result-handling tools, different workers</h3>
+    <ul class="lesson-bullets">
+      <li><code>pool.map(count_primes, limits)</code> returns an iterator yielding results in <strong>input order</strong>. <code>list(...)</code> consumes it, waiting as needed; it does not expose which task finished first.</li>
+      <li><code>pool.submit(count_primes, limit)</code> returns a <code>Future</code>. Submit the tasks first, then use <code>as_completed(futures)</code> to handle completed futures as they become available.</li>
+      <li><code>future.result()</code> returns the worker's value or raises its exception. With <code>map()</code>, an exception is raised when that result is retrieved. Consume results so failures are not missed; shutting down a pool alone does not retrieve them.</li>
+      <li>For example, <code>count_primes(-1)</code> raises <code>ValueError</code>. To report a failed job and keep handling the others, use <code>submit()</code>/<code>as_completed()</code> and catch that specific error around each <code>future.result()</code>. A <code>map()</code> iterator stops when a task exception escapes; do not silently replace a failure with a successful-looking count.</li>
+    </ul>
+
+    <details class="go-deeper">
+      <summary>Go Deeper: why can a process pool be slower?</summary>
+      <ul>
+        <li>The small example teaches the API, not a guaranteed speedup. Startup, serialization, data copying, and extra memory can outweigh the computation saved.</li>
+        <li>Compare with <code>[count_primes(limit) for limit in limits]</code> on the same inputs. To measure elapsed time, subtract readings from <code>time.perf_counter()</code> before and after the whole operation, including pool creation and shutdown.</li>
+        <li>Use a bounded worker count appropriate for available cores and memory. Reuse a pool for a batch instead of creating one per item; larger batches can reduce per-task transfer overhead.</li>
+        <li>Run saved scripts with the main guard on every platform. Python 3.14 changed the default process-pool start method away from <code>fork</code>; do not depend on inheriting the parent's state. See the <a href="https://docs.python.org/3.14/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor">official process-pool documentation</a> for platform details.</li>
+      </ul>
+    </details>
+
+    <div class="quick-recap">
+      <span class="label">Quick recap</span>
+      <ul>
+        <li><code>ProcessPoolExecutor</code> can parallelize independent CPU-bound Python tasks without sharing one interpreter's GIL.</li>
+        <li>Use importable module-level workers, picklable arguments/results, a guarded entry point, and a saved local script.</li>
+        <li>Return values to the parent instead of mutating shared-looking globals; retrieve results to surface failures.</li>
+        <li>The API resembles a thread pool, but the memory model and overhead differ. Measure before choosing it.</li>
+      </ul>
+    </div>
+  </div>
+
   <div class="subtopic" id="real-world-threading">
-    <span class="subtopic-label">Sub-topic 8 of 8</span>
-    <h2>8. Real-world threading</h2>
+    <span class="subtopic-label">Sub-topic 9 of 9</span>
+    <h2>9. Real-world threading</h2>
     <div class="lesson-stack">
       <div class="lesson-pill">At a glance</div>
       <ul class="lesson-bullets">
         <li>Concurrent downloads, concurrent API calls, and parallel file processing are the three most common real-world reasons to reach for threading.</li>
         <li>Chapter 19's API-fetching pattern (fetch &rarr; parse &rarr; format) is the exact kind of I/O-bound work threading was built for.</li>
-        <li>This chapter's project combines everything: a menu-driven "concurrent download simulator" comparing sequential vs. threaded timing, protected shared progress, and a <code>ThreadPoolExecutor</code> alternative.</li>
+        <li>The download-simulator project combines the threading tools; the process-pool practice handles the separate CPU-bound case.</li>
       </ul>
     </div>
 
@@ -1044,7 +1221,7 @@ print(results)</textarea>
     <ul class="lesson-bullets">
       <li><strong>Concurrent downloads:</strong> pulling multiple files from a server (or multiple servers) at once, rather than one at a time &mdash; this chapter's project builds exactly this, simulated with <code>time.sleep()</code>.</li>
       <li><strong>Concurrent API calls:</strong> Chapter 19's <code>requests.get()</code> pattern, called several times for different resources at once instead of sequentially &mdash; checking the weather for five cities concurrently instead of one after another, for instance.</li>
-      <li><strong>Parallel file processing:</strong> reading and processing several independent files (Chapter 13's file handling) at the same time, when each file's processing spends real time waiting on disk I/O.</li>
+      <li><strong>Concurrent file processing:</strong> reading several independent files (Chapter 13) when disk I/O is the bottleneck. If heavy Python computation dominates instead, consider a process pool; profile rather than assuming that every file-processing task is I/O-bound.</li>
     </ul>
 
     <div class="what-is">
@@ -1060,7 +1237,7 @@ print(results)</textarea>
     </div>
 
     <p>
-      This chapter's project brings every piece together: a menu-driven
+      This chapter's project brings the threading pieces together: a menu-driven
       tool that "downloads" several files concurrently (each a
       <code>time.sleep()</code> standing in for real network time), reports
       how much faster that was than doing them one at a time, uses a
@@ -1069,6 +1246,13 @@ print(results)</textarea>
       on <code>ThreadPoolExecutor</code> instead of raw <code>Thread</code>
       objects &mdash; a direct, hands-on comparison of Sub-topic 2's raw
       approach against Sub-topic 7's higher-level one.
+    </p>
+    <p>
+      The simulator should stay thread-based: its work is waiting.
+      Sub-topic 8 and <a href="practice/index.html#process-pool-executor">the
+      process-pool practice</a> cover computation instead; replacing a
+      thread pool with a process pool just to run <code>sleep()</code>
+      would not demonstrate CPU parallelism.
     </p>
 
     <details class="go-deeper">
@@ -1100,20 +1284,23 @@ print(results)</textarea>
     <ul>
       <li>Web browsers, download managers, and any app with a "loading several things at once" screen rely on threading (or an equivalent concurrency tool) to overlap waits instead of doing them one at a time.</li>
       <li>Race conditions are a real, expensive category of production bug specifically because they're timing-dependent &mdash; code can pass every test during development and still fail unpredictably under real concurrent load, which is exactly why defensive locking or shared-nothing design (Sub-topics 5-6) matters more here than in most other chapters.</li>
-      <li><code>ThreadPoolExecutor</code> (or an equivalent thread-pool abstraction) is the default choice in most production Python code that needs concurrency for I/O-bound work &mdash; raw <code>Thread</code> objects are still worth understanding, but real code rarely manages them by hand once a pool-based tool is available.</li>
+      <li><code>ThreadPoolExecutor</code> is a common choice for blocking I/O; <code>ProcessPoolExecutor</code> handles independent CPU-heavy Python jobs. The bottleneck, interpreter build, data-transfer cost, and available resources decide which is useful.</li>
     </ul>
   </div>
 
   <div class="points-to-remember">
     <h2>Points to Remember</h2>
     <ul>
-      <li>A thread is a separate line of execution sharing a program's memory; threading speeds up I/O-bound work (waiting on network, disk, a database) but not CPU-bound work (pure computation).</li>
+      <li>A thread shares a program's memory. Threads can overlap I/O waits, but pure-Python CPU work cannot run in parallel within one GIL-enabled interpreter.</li>
       <li><code>threading.Thread(target=fn, args=(...))</code> creates a thread; <code>.start()</code> begins it; <code>.join()</code> waits for it to finish. Start every thread before joining any of them to let their waits overlap.</li>
-      <li>The GIL lets only one thread run Python bytecode at a time, but a thread waiting on I/O releases it, letting other threads run &mdash; the reason threading helps I/O-bound work specifically.</li>
+      <li>CPU-bound threads periodically take turns holding the GIL; blocking I/O releases it while waiting. Some native libraries also release it during computation.</li>
+      <li>Free-threaded CPython debuted experimentally in 3.13 and is supported but optional in 3.14. It permits parallel Python threads with the GIL disabled, but does not remove synchronization requirements.</li>
       <li>A race condition happens when multiple threads read and write shared mutable state without coordination; the GIL does not prevent this.</li>
       <li><code>with lock:</code> (from <code>threading.Lock()</code>) lets only one thread run a block of code at a time, fixing a race condition by closing the gap it depends on.</li>
       <li>Avoiding shared mutable state between threads (giving each thread its own data, combining results only after every thread finishes) sidesteps race conditions without needing a lock at all.</li>
-      <li><code>concurrent.futures.ThreadPoolExecutor</code> manages a pool of worker threads automatically &mdash; <code>.map()</code> for ordered results, <code>.submit()</code> + <code>as_completed()</code> for results as they finish.</li>
+      <li><code>concurrent.futures.<wbr>ThreadPoolExecutor</code> manages a pool of worker threads automatically &mdash; <code>.map()</code> for ordered results, <code>.submit()</code> + <code>as_completed()</code> for results as they finish.</li>
+      <li><code>ProcessPoolExecutor</code> uses separate interpreters and memory for CPU-bound work. Use module-level workers, picklable data, a main guard, and a saved local script.</li>
+      <li>Both executors require result retrieval to surface task errors. Process startup and data transfer can outweigh parallelism, so measure end-to-end rather than assuming more workers are faster.</li>
       <li>Concurrent downloads, concurrent API calls, and parallel file processing are the most common real-world reasons to reach for threading, all of them I/O-bound.</li>
     </ul>
   </div>
@@ -1135,6 +1322,7 @@ print(results)</textarea>
 
 <script src="../../assets/progress.js"></script>
 <script src="../../assets/playground.js"></script>
+<script src="../../assets/genai-grader.js"></script>
 <script src="../../assets/chapters-data.js"></script>
 <script src="../../assets/sidebar.js"></script>
 </body>

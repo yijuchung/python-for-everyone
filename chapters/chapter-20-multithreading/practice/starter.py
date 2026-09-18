@@ -2,6 +2,9 @@
 Chapter 20 Practice Bank: Multithreading
 See README.md in this folder for full instructions.
 Run this from inside the practice/ folder: python3 starter.py
+Use a saved local script, not the browser, REPL, or a notebook.
+Define worker functions at module level. Put every demo call and pool run
+inside main() at the bottom so spawned workers can import this file safely.
 
 Every "wait" in this practice bank uses time.sleep() to stand in for a
 slow network or disk operation -- no real network access or file I/O
@@ -10,7 +13,7 @@ happens anywhere in this file.
 
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 # ============================================================
 # Topic 1: What a thread is, and I/O-bound vs. CPU-bound
@@ -44,9 +47,6 @@ def classify(name):
     return "I/O-bound"
 
 
-print(classify("download"))
-
-
 # TODO 1.A (Scenario -- Explaining Why Threading Helps Downloads): a
 # teammate asks why running several downloads on separate threads is
 # faster than downloading them one at a time. Write a function
@@ -65,8 +65,9 @@ print(classify("download"))
 # outside the CPU (network, disk) while the CPU itself is idle, which is
 # the gap threading fills by overlapping several waits at once, while
 # CPU-bound work spends most of its time actually computing, with
-# nothing to wait on, so more threads don't make one CPU compute any
-# faster. Call it and print the result.
+# nothing to wait on. In one GIL-enabled CPython interpreter, Python
+# threads take turns rather than computing on multiple cores at once.
+# Call it and print the result.
 
 
 # ============================================================
@@ -111,9 +112,6 @@ def broken_order():
     return results_list
 
 
-print(sorted(broken_order()))
-
-
 # TODO 2.A (Scenario -- Running Any Task Concurrently): write a reusable
 # function run_tasks_concurrently(task_fn, items, results_list) that
 # creates one thread per item in `items` (each calling
@@ -139,11 +137,16 @@ print(sorted(broken_order()))
 # Topic 3: The GIL
 # ============================================================
 
+# Assume one GIL-enabled CPython interpreter and pure-Python CPU work
+# for the simple classifiers below; explain exceptions in TODO 3.B.
+
 # TODO 3.1: Write a function gil_releases_during(operation) that returns
 # True if operation is one of "sleep", "network_call", "file_read", or
 # "database_query", and False otherwise. Loop over ["sleep",
 # "tight_math_loop", "network_call"] and print
-# f"{op}: releases GIL = {gil_releases_during(op)}" for each.
+# f"{op}: releases GIL while waiting = {gil_releases_during(op)}".
+# False means "not a blocking wait", not "never releases the GIL":
+# CPU-bound Python threads still periodically take turns.
 
 
 # TODO 3.2: Write a function would_threading_help(work_type) that returns
@@ -154,31 +157,30 @@ print(sorted(broken_order()))
 
 # TODO 3.3 (Debug the Code): this is supposed to accurately describe the
 # GIL, but it claims Python threads always run fully in parallel on
-# separate CPU cores -- exactly what the GIL prevents. Find and fix it.
+# separate CPU cores. Fix it for threads sharing an enabled GIL.
 def explain_gil():
     return "Python threads always run fully in parallel on separate CPU cores."
 
 
-print(explain_gil())
-
-
 # TODO 3.A (Scenario -- Explaining the GIL to a Teammate): a teammate asks
 # what the GIL actually does. Write a function explain_gil_to_a_teammate()
-# that returns a string explaining that the GIL only lets one thread run
-# Python code at a time, but a thread waiting on I/O releases the GIL
-# during that wait, letting another thread run -- which is why threading
-# speeds up I/O-bound work but not CPU-bound work, since a computing
-# thread barely releases the GIL at all. Call it and print the result.
+# that returns a string explaining that only one thread per GIL-enabled
+# CPython interpreter executes bytecode at a time. Blocking I/O releases
+# the GIL while waiting; CPU-bound Python threads periodically take turns.
+# Both make progress, but cannot compute simultaneously in that
+# interpreter. Separate process workers have separate interpreters and
+# GILs. Call it and print the result.
 
 
 # TODO 3.B (Scenario -- Interview Prep): an interviewer asks you to
 # explain the GIL's practical impact on threading. Write a function
 # explain_gil_interview_answer() that returns a string explaining that the
-# GIL means multiple Python threads never execute bytecode at the exact
-# same instant even on a multi-core machine, which makes threading a poor
-# fit for CPU-bound work, but doesn't make threading useless overall since
-# a thread waiting on I/O releases the GIL for that wait, letting
-# I/O-bound tasks genuinely overlap. Call it and print the result.
+# GIL serializes bytecode execution within one GIL-enabled interpreter,
+# while blocking I/O can overlap and native code can release the GIL.
+# Include free-threaded CPython: experimental in 3.13, supported but
+# optional in 3.14, parallel Python execution when the GIL is disabled,
+# and possible re-enabling by incompatible extensions. Shared mutable
+# state still needs synchronization. Call it and print the result.
 
 
 # ============================================================
@@ -217,9 +219,6 @@ def unsafe_increment(times):
 # thread runs. Find and fix it.
 def explain_gil_and_races():
     return "The GIL fully prevents race conditions, so no lock is ever needed."
-
-
-print(explain_gil_and_races())
 
 
 # TODO 4.A (Scenario -- Diagnosing a Flaky Counter Bug): a teammate
@@ -286,14 +285,6 @@ def add_amount_broken(amount, times):
         total_54 = current + amount
 
 
-threads_54 = [threading.Thread(target=add_amount_broken, args=(1, 500)) for _ in range(4)]
-for t in threads_54:
-    t.start()
-for t in threads_54:
-    t.join()
-print(f"broken (no lock used even though one exists): expected 2000, got {total_54}")
-
-
 # TODO 5.A (Scenario -- A Thread-Safe Logger): write a function
 # build_thread_safe_logger() that creates a local `log_lines` list and a
 # `log_lock = threading.Lock()`, defines an inner function
@@ -348,18 +339,6 @@ print(f"broken (no lock used even though one exists): expected 2000, got {total_
 # write in "with lock_obj:".
 def unsafe_shared_dict_write(key, value, shared_dict):
     shared_dict[key] = value
-
-
-shared_dict_64 = {}
-threads_64 = [
-    threading.Thread(target=unsafe_shared_dict_write, args=(f"k{i}", i, shared_dict_64))
-    for i in range(4)
-]
-for t in threads_64:
-    t.start()
-for t in threads_64:
-    t.join()
-print(len(shared_dict_64))
 
 
 # TODO 6.A (Scenario -- Parallel Word Count): write a function
@@ -421,9 +400,6 @@ def broken_pool_usage():
     return results_list
 
 
-print(broken_pool_usage())
-
-
 # TODO 7.A (Scenario -- Fetching Weather for Several Cities Concurrently):
 # write a function fetch_all_weather(cities) that defines an inner helper
 # fetch_one(city) which sleeps 0.01 seconds and returns f"{city}: 75F",
@@ -442,3 +418,95 @@ print(broken_pool_usage())
 # still doesn't make shared mutable state automatically safe, since a
 # lock or shared-nothing design is still needed if the submitted work
 # reads and writes the same shared data. Call it and print the result.
+
+
+# ============================================================
+# Topic 8: ProcessPoolExecutor
+# ============================================================
+
+# TODO 8.1: Write choose_pool(work_type). For GIL-enabled CPython,
+# return "ThreadPoolExecutor" for "I/O-bound", "ProcessPoolExecutor"
+# for "CPU-bound" independent Python jobs, and raise ValueError for
+# any other label. Call it with both valid labels and print each result.
+# This is a starting rule, not a promise that concurrency is faster.
+
+
+# TODO 8.2: Define count_primes(limit) at module level, using the lesson's
+# CPU-bound worker. For integer limits, count primes strictly below limit;
+# return 0 for 0, 1, and 2, and raise ValueError("limit must be non-negative")
+# for negative limits. Write count_all_primes(limits) using a
+# ProcessPoolExecutor(max_workers=2) context manager and list(pool.map(...)).
+# In main(), print count_all_primes([10, 20, 30]): expected [4, 8, 10].
+# Empty input should return []; do not use sleep() to simulate CPU work.
+
+
+# TODO 8.3: Write collect_prime_counts(limits). Submit count_primes once
+# per limit to a ProcessPoolExecutor(max_workers=2), remembering which
+# Future belongs to which limit. Use as_completed() and future.result().
+# Collect (limit, count) pairs in results; catch ValueError from result()
+# and collect (limit, str(error)) pairs in failures instead of inventing
+# a successful count. Return (sorted(results), sorted(failures)).
+# In main(), call it with [10, -1, 20] and print BOTH returned lists:
+# Results: [(10, 4), (20, 8)]
+# Failures: [(-1, 'limit must be non-negative')]
+
+
+# TODO 8.4 (Debug the Code): the lambda below is not an importable
+# process-pool worker. Replace it with the module-level triple_val
+# function already provided in Topic 7. After fixing it, call
+# broken_process_pool([1, 2, 3]) from main() and print [3, 6, 9].
+# Do not move worker definitions inside main() or its guard.
+def broken_process_pool(values):
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        return list(pool.map(lambda value: value * 3, values))
+
+
+# TODO 8.A (Scenario -- Missing Report Results): a report service passes
+# an ordinary list to process workers and has each append its result.
+# The parent's list stays empty. Write explain_process_isolation()
+# explaining separate memory, why threading.Lock cannot fix this, and
+# how returning picklable values for the parent to combine fixes the
+# design. Call it and print the result.
+
+
+# TODO 8.B (Scenario -- Interview Prep): a process pool is slower than
+# a sequential loop for tiny computations. Write
+# explain_process_pool_tradeoffs() explaining startup, serialization,
+# data copying, and memory costs; bounded worker counts and pool reuse;
+# and comparing identical results and end-to-end timings. Explain why
+# a sleep-based benchmark does not demonstrate CPU parallelism.
+# Call it and print the result.
+
+
+def main():
+    global total_54
+    total_54 = 0
+
+    # Add completed tasks' calls here; spawned workers must not rerun them.
+    print(classify("download"))
+    print(sorted(broken_order()))
+    print(explain_gil())
+    print(explain_gil_and_races())
+
+    threads_54 = [threading.Thread(target=add_amount_broken, args=(1, 500)) for _ in range(4)]
+    for t in threads_54:
+        t.start()
+    for t in threads_54:
+        t.join()
+    print(f"broken (no lock used even though one exists): expected 2000, got {total_54}")
+
+    shared_dict_64 = {}
+    threads_64 = [
+        threading.Thread(target=unsafe_shared_dict_write, args=(f"k{i}", i, shared_dict_64))
+        for i in range(4)
+    ]
+    for t in threads_64:
+        t.start()
+    for t in threads_64:
+        t.join()
+    print(len(shared_dict_64))
+    print(broken_pool_usage())
+
+
+if __name__ == "__main__":
+    main()
