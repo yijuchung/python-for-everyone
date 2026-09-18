@@ -193,6 +193,7 @@ window.PFE_MODULES = [
         { id: "threading-lock", title: "threading.Lock" },
         { id: "thread-safety-patterns", title: "Thread safety patterns" },
         { id: "thread-pool-executor", title: "ThreadPoolExecutor" },
+        { id: "process-pool-executor", title: "ProcessPoolExecutor" },
         { id: "real-world-threading", title: "Real-world threading" }
       ] },
       { id: "chapter-21", num: 21, title: "Working with Databases", path: "chapters/chapter-21-databases/lesson.html", subtopics: [

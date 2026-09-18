@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chapter 20 Interview Questions — Python for Everyone</title>
-<meta name="description" content="Interview prep for Chapter 20: Multithreading — threads, threading.Thread/.start()/.join(), the GIL, race conditions, threading.Lock, thread safety patterns, and concurrent.futures.ThreadPoolExecutor.">
+<meta name="description" content="Interview prep for Chapter 20: Multithreading — the GIL and free-threaded CPython, race conditions, locks, ThreadPoolExecutor, ProcessPoolExecutor, and portable process startup.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐍</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -35,17 +35,17 @@
     <span class="reading-time">45 min read</span>
   </div>
   <h1>Interview Questions: Multithreading</h1>
-  <p>The GIL and race conditions are two of the most commonly asked Python interview topics, because they test whether a candidate actually understands what threading does and doesn't help with, rather than just knowing the syntax. This set covers <code>threading.Thread</code>/<code>.start()</code>/<code>.join()</code>, I/O-bound vs. CPU-bound work, the GIL's real behavior, race conditions and why they're hard to catch, <code>threading.Lock</code>, thread safety patterns, and <code>concurrent.futures.ThreadPoolExecutor</code>.</p>
+  <p>The GIL and race conditions test whether a candidate understands when concurrency helps, rather than just knowing the syntax. This set covers threads, locks, <code>ThreadPoolExecutor</code>, <code>ProcessPoolExecutor</code>, and optional free-threaded CPython. Unless stated otherwise, assume one GIL-enabled CPython interpreter; distinguish pure-Python work from native code that releases the GIL.</p>
 
   <details class="qa-item">
     <summary><span class="q-num">1</span> Does Python's threading module give a program true parallelism?</summary>
     <div class="qa-body">
       <span class="qa-section-label strong">Strong answer</span>
-      <p>Not for CPU-bound work, and that distinction is the crux of this question. The GIL (Global Interpreter Lock) allows only one thread to execute Python bytecode at a time, even on a multi-core machine, so two threads never run Python code <em>simultaneously</em> on separate cores. What threading genuinely does provide is <strong>concurrency</strong> for I/O-bound work: a thread waiting on a network response, disk read, or <code>time.sleep()</code> releases the GIL during that wait, letting another thread make real progress. So the honest answer is "it depends on the kind of work" &mdash; true parallel execution of Python code needs <code>multiprocessing</code> (separate processes, each with its own interpreter and GIL) or specialized libraries, not <code>threading</code>.</p>
+      <p>It depends on the interpreter and workload. With the GIL enabled, threads in one CPython interpreter take turns executing Python bytecode: concurrent progress, but not parallel bytecode execution. Blocking I/O releases the GIL, so waits can overlap. Native operations that release the GIL can run in parallel, and free-threaded CPython can execute Python threads in parallel when its GIL is disabled. For independent pure-Python CPU jobs on a GIL-enabled build, <code>ProcessPoolExecutor</code> uses separate interpreters to obtain multi-core parallelism.</p>
       <span class="qa-section-label flags">Red flags</span>
       <p>Answering with a flat "yes" (ignoring the GIL entirely) or a flat "no, threading is pointless in Python" (ignoring that it genuinely helps I/O-bound work).</p>
       <span class="qa-section-label followup">Follow-up</span>
-      <p>"If a program needs to genuinely max out 8 CPU cores computing something, is <code>threading</code> or <code>multiprocessing</code> the better tool?" (<code>multiprocessing</code> &mdash; each process gets its own interpreter and its own GIL, so 8 processes can actually use 8 cores simultaneously; 8 threads cannot, since they all share one GIL.)</p>
+      <p>"How would you spread independent Python computations across 8 available cores on a GIL-enabled build?" (Consider a process pool with a suitable worker count. Separate interpreters can compute simultaneously, but task size, data-transfer overhead, memory, and other system load determine the actual speedup.)</p>
     </div>
   </details>
 
@@ -53,11 +53,11 @@
     <summary><span class="q-num">2</span> What is the difference between I/O-bound and CPU-bound work, and why does it matter for choosing whether to use threading?</summary>
     <div class="qa-body">
       <span class="qa-section-label strong">Strong answer</span>
-      <p><strong>I/O-bound</strong> work spends most of its time waiting on something outside the CPU &mdash; a network response, a disk read, a database query &mdash; the CPU is idle during that wait. <strong>CPU-bound</strong> work spends most of its time actually computing, with the CPU busy continuously and nothing to wait on. It matters because threading's entire benefit comes from overlapping waits: a thread waiting on I/O releases the GIL, letting other threads run during that idle time. A CPU-bound thread almost never releases the GIL, so adding more threads to CPU-bound work doesn't meaningfully speed anything up &mdash; it can even slow things down slightly, from the overhead of switching between threads that all still have to take turns on one CPU core's worth of GIL access.</p>
+      <p><strong>I/O-bound</strong> work spends most of its time waiting on network, disk, or another external resource. <strong>CPU-bound</strong> work spends most of its time computing. Threads can overlap blocking I/O waits. CPU-bound Python threads periodically hand off the GIL and both make progress, but only one executes bytecode at a time in that interpreter. They therefore cannot gain multi-core throughput for that computation and may add scheduling overhead. Separate processes, native code that releases the GIL, and free-threaded builds change the options.</p>
       <span class="qa-section-label flags">Red flags</span>
       <p>Reaching for threading to speed up a pure computation, or not being able to give a concrete example of each category.</p>
       <span class="qa-section-label followup">Follow-up</span>
-      <p>"Is calculating the ten-millionth prime number I/O-bound or CPU-bound?" (CPU-bound &mdash; it's pure computation with nothing to wait on, so threading wouldn't meaningfully speed it up in standard Python.)</p>
+      <p>"Is calculating the ten-millionth prime number I/O-bound or CPU-bound?" (CPU-bound. A Python-loop implementation cannot gain parallel bytecode execution from threads sharing an enabled GIL; independent searches could use a process pool.)</p>
     </div>
   </details>
 
@@ -77,11 +77,11 @@
     <summary><span class="q-num">4</span> What is the GIL, and why does CPython have it?</summary>
     <div class="qa-body">
       <span class="qa-section-label strong">Strong answer</span>
-      <p>The <strong>Global Interpreter Lock</strong> is a lock built into the standard Python interpreter (CPython) that allows only one thread to execute Python bytecode at any given instant, regardless of how many CPU cores the machine has. It exists primarily to keep CPython's internal memory management (specifically, reference counting for garbage collection) simple and safe by default, without needing much more fine-grained locking scattered throughout the interpreter's internals. The tradeoff is exactly what makes this a common interview question: it simplifies the interpreter's implementation at the cost of true parallel execution of Python bytecode across threads.</p>
+      <p>The <strong>Global Interpreter Lock</strong> protects interpreter internals, including reference counts, in GIL-enabled CPython. Only one thread in that interpreter can hold it to execute Python bytecode at a time. It simplifies internal synchronization, but serializes bytecode execution across those threads. It does not make an application's multi-step updates atomic, and it is not a requirement of the Python language.</p>
       <span class="qa-section-label flags">Red flags</span>
       <p>Not knowing what the GIL protects (reference counting / internal interpreter state) or claiming it's an arbitrary, purposeless limitation.</p>
       <span class="qa-section-label followup">Follow-up</span>
-      <p>"Is the GIL a feature of the Python language itself, or specific to one implementation?" (Specific to CPython, the standard/reference implementation most people mean by "Python" &mdash; other implementations, like Jython or the experimental free-threaded CPython builds, handle this differently.)</p>
+      <p>"Does upgrading to Python 3.14 automatically remove the GIL?" (No. CPython 3.13 introduced an experimental free-threaded build; 3.14 made it supported but still optional. The default build remains GIL-enabled, and even a free-threaded build can run with the GIL enabled.)</p>
     </div>
   </details>
 
@@ -197,11 +197,47 @@
     <summary><span class="q-num">14</span> Give three real-world examples of tasks well-suited to threading, and explain what they have in common.</summary>
     <div class="qa-body">
       <span class="qa-section-label strong">Strong answer</span>
-      <p>Concurrent file downloads (pulling several files from a server, or several servers, at once instead of one at a time), concurrent API calls (checking several external services' responses at once, like weather for five cities, instead of sequentially), and parallel file processing (reading and processing several independent files, where each one spends real time waiting on disk I/O). What they all have in common: every one is I/O-bound &mdash; the actual work is mostly waiting on something outside the CPU, not computing &mdash; which is exactly the category threading speeds up by letting those waits overlap instead of happening one after another. None of them would benefit meaningfully if the "work" were pure computation instead of waiting.</p>
+      <p>Concurrent file downloads, concurrent API calls, and reading independent files when disk I/O dominates. They all spend substantial time waiting, so a thread pool can overlap those waits. A filename alone does not establish the bottleneck: heavy Python processing after a read may make the whole task CPU-bound instead.</p>
       <span class="qa-section-label flags">Red flags</span>
       <p>Naming a CPU-bound example (image processing's actual pixel math, heavy numerical computation) as a good threading use case without qualifying that the I/O part (reading the file, not processing it) is the piece that actually benefits.</p>
       <span class="qa-section-label followup">Follow-up</span>
-      <p>"Would resizing 1,000 images in memory (pure CPU-bound pixel computation, no file I/O) benefit meaningfully from Python threading?" (Not meaningfully &mdash; that's CPU-bound work with almost nothing to wait on, so threads would mostly take turns on the GIL rather than genuinely overlapping; <code>multiprocessing</code> would be the better fit for that specific case.)</p>
+      <p>"Would resizing 1,000 images in memory benefit from threads?" (Ask how resizing is implemented. Python pixel loops sharing an enabled GIL cannot run in parallel; independent jobs may suit <code>ProcessPoolExecutor</code>. A native image library that releases the GIL, or a free-threaded build with compatible code, may benefit from threads. Benchmark rather than inferring the answer from the word 'image'.)</p>
+    </div>
+  </details>
+
+  <details class="qa-item">
+    <summary><span class="q-num">15</span> When would you choose <code>ProcessPoolExecutor</code> over <code>ThreadPoolExecutor</code>?</summary>
+    <div class="qa-body">
+      <span class="qa-section-label strong">Strong answer</span>
+      <p>Choose a process pool for substantial, independent pure-Python CPU tasks when threads share an enabled GIL. Workers have separate interpreters, GILs, and memory, so they can execute on different available cores. Both pools expose <code>map()</code>, <code>submit()</code>, and futures, but process tasks and results must be picklable. Threads are usually lighter for blocking I/O. Process startup, serialization, copying, and memory use can outweigh any parallelism benefit.</p>
+      <span class="qa-section-label flags">Red flags</span>
+      <p>Claiming processes are always faster, benchmarking only <code>sleep()</code> as evidence of CPU speedup, or treating a process worker's globals as the parent's shared state.</p>
+      <span class="qa-section-label followup">Follow-up</span>
+      <p>"A worker appends to an ordinary list passed by the parent. Why is the parent's list unchanged?" (The worker modifies its own deserialized copy. Return a result and combine results in the parent; <code>threading.Lock</code> does not turn that list into shared process memory.)</p>
+    </div>
+  </details>
+
+  <details class="qa-item">
+    <summary><span class="q-num">16</span> What makes a process-pool script portable, and how do worker failures reach the caller?</summary>
+    <div class="qa-body">
+      <span class="qa-section-label strong">Strong answer</span>
+      <p>Use module-level worker functions, picklable inputs and outputs, a saved importable script, and <code>if __name__ == "__main__":</code> around program startup. Fresh workers can import the script without rerunning its demos or recursively creating pools. Keep worker definitions outside the guard; avoid lambdas and nested workers. Manage the pool with <code>with</code>. A task's error is raised by <code>future.result()</code>, or when its result is retrieved from <code>map()</code>, so submitted work must have its results consumed.</p>
+      <span class="qa-section-label flags">Red flags</span>
+      <p>Assuming code that depends on <code>fork</code> will work everywhere, putting the worker definition inside the main guard, or assuming pool shutdown alone re-raises all worker exceptions.</p>
+      <span class="qa-section-label followup">Follow-up</span>
+      <p>"Why can the same process-pool snippet fail in a notebook or browser playground?" (Workers need an importable module; interactive definitions do not provide that reliably, and the browser runtime cannot launch Python worker processes. Run the example as a local script.)</p>
+    </div>
+  </details>
+
+  <details class="qa-item">
+    <summary><span class="q-num">17</span> What changes with free-threaded CPython, and what does not?</summary>
+    <div class="qa-body">
+      <span class="qa-section-label strong">Strong answer</span>
+      <p>With the GIL disabled, threads can execute Python code simultaneously on available cores. The build was experimental in 3.13 and became supported but optional in 3.14. Version alone does not prove the GIL is disabled: runtime settings or an incompatible extension can enable it. On CPython 3.13+, <code>sys._is_gil_enabled()</code> checks the running process. Shared mutable state still needs synchronization, and speedup still depends on workload and overhead.</p>
+      <span class="qa-section-label flags">Red flags</span>
+      <p>Saying "Python 3.14 has no GIL" without naming the build and runtime state, or removing locks because the GIL is gone.</p>
+      <span class="qa-section-label followup">Follow-up</span>
+      <p>"Does free threading make <code>counter += 1</code> a safe shared-counter update?" (No. Protect the read-modify-write sequence or collect independent results, just as with GIL-enabled code.)</p>
     </div>
   </details>
 
@@ -215,7 +251,7 @@
   <form onsubmit="return false;">
 
     <div class="quiz-question">
-      <label for="r1"><span class="q-num">1</span> Threading speeds up ____-bound work (waiting on network, disk, a database), not CPU-bound work.</label>
+      <label for="r1"><span class="q-num">1</span> Threads sharing an enabled GIL can overlap ____-bound work such as waiting on network, disk, or a database.</label>
       <div class="fib-row">
         <input type="text" id="r1" class="fib-blank" data-answers="I/O,io" aria-label="Answer for rapid-fire question 1">
         <button type="button" class="check-btn">Check</button>
@@ -242,7 +278,7 @@
     </div>
 
     <div class="quiz-question">
-      <label for="r4"><span class="q-num">4</span> The ____ (Global Interpreter Lock) allows only one thread to execute Python bytecode at a time.</label>
+      <label for="r4"><span class="q-num">4</span> An enabled ____ (Global Interpreter Lock) allows only one thread in an interpreter to execute Python bytecode at a time.</label>
       <div class="fib-row">
         <input type="text" id="r4" class="fib-blank" data-answers="GIL,gil" aria-label="Answer for rapid-fire question 4">
         <button type="button" class="check-btn">Check</button>
@@ -323,9 +359,42 @@
     </div>
 
     <div class="quiz-question">
-      <label for="r13"><span class="q-num">13</span> <code>pool.submit(fn, *args)</code> returns a ____ representing a result that doesn't exist yet.</label>
+      <label for="r13"><span class="q-num">13</span> <code>pool.submit(fn, *args)</code> returns a ____ tracking the task's state and eventual result or exception.</label>
       <div class="fib-row">
         <input type="text" id="r13" class="fib-blank" data-answers="Future,future" aria-label="Answer for rapid-fire question 13">
+        <button type="button" class="check-btn">Check</button>
+        <span class="fib-feedback" aria-live="polite"></span>
+      </div>
+    </div>
+
+    <div class="quiz-question">
+      <label for="r14"><span class="q-num">14</span> <code>____</code> uses separate worker processes rather than threads in one interpreter.</label>
+      <div class="fib-row">
+        <input type="text" id="r14" class="fib-blank" data-answers="ProcessPoolExecutor" aria-label="Answer for rapid-fire question 14">
+        <button type="button" class="check-btn">Check</button>
+        <span class="fib-feedback" aria-live="polite"></span>
+      </div>
+    </div>
+    <div class="quiz-question">
+      <label for="r15"><span class="q-num">15</span> A process-pool script guards startup with <code>if __name__ == "____":</code>.</label>
+      <div class="fib-row">
+        <input type="text" id="r15" class="fib-blank" data-answers="__main__" aria-label="Answer for rapid-fire question 15">
+        <button type="button" class="check-btn">Check</button>
+        <span class="fib-feedback" aria-live="polite"></span>
+      </div>
+    </div>
+    <div class="quiz-question">
+      <label for="r16"><span class="q-num">16</span> Process-pool arguments and results must be ____ for serialization.</label>
+      <div class="fib-row">
+        <input type="text" id="r16" class="fib-blank" data-answers="picklable,pickleable" aria-label="Answer for rapid-fire question 16">
+        <button type="button" class="check-btn">Check</button>
+        <span class="fib-feedback" aria-live="polite"></span>
+      </div>
+    </div>
+    <div class="quiz-question">
+      <label for="r17"><span class="q-num">17</span> In CPython 3.14, the free-threaded build is supported but still ____ rather than the default.</label>
+      <div class="fib-row">
+        <input type="text" id="r17" class="fib-blank" data-answers="optional,opt-in" aria-label="Answer for rapid-fire question 17">
         <button type="button" class="check-btn">Check</button>
         <span class="fib-feedback" aria-live="polite"></span>
       </div>

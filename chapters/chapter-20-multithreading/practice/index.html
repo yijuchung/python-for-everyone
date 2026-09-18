@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chapter 20 Practice Bank — Python for Everyone</title>
-<meta name="description" content="Deeper per-topic practice problems for Chapter 20: Multithreading, including interview-style scenario problems on threads, the GIL, race conditions, threading.Lock, thread safety patterns, and ThreadPoolExecutor.">
+<meta name="description" content="Chapter 20 practice on threads, the GIL and free-threaded CPython, locks, ThreadPoolExecutor, and local ProcessPoolExecutor tasks with portable startup and error handling.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐍</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -32,7 +32,7 @@
 
   <div class="page-meta">
     <span class="chapter-badge">Chapter 20 Practice Bank</span>
-    <span class="reading-time">70-90 min, hands-on</span>
+    <span class="reading-time">85-110 min, hands-on</span>
   </div>
   <h1>Practice Bank: Multithreading</h1>
   <p>
@@ -40,9 +40,10 @@
     beyond the main exercises &mdash; including scenario-based problems
     written in the same style you'll meet in real interviews. Every
     "wait" here uses <code>time.sleep()</code> to stand in for a slow
-    network or disk operation &mdash; no real network access or file I/O
-    happens anywhere in this bank. No import beyond
-    <code>json</code>/<code>os</code>/<code>re</code>/<code>math</code>/<code>datetime</code>/<code>random</code>/<code>csv</code>/<code>threading</code>/<code>concurrent.futures</code>.
+    network or disk operation. The process-pool tasks do actual CPU work
+    instead; no network access or application-data file I/O is needed.
+    No import beyond
+    <code>json</code>/<code>os</code>/<code>re</code>/<code>math</code>/<code>datetime</code>/<code>random</code>/<code>csv</code>/<code>time</code>/<code>threading</code>/<code>concurrent.futures</code>.
   </p>
 
   <nav class="page-toc" aria-label="On this page">
@@ -54,12 +55,18 @@
     <a href="#threading-lock">5. <code>threading.Lock</code></a>
     <a href="#thread-safety-patterns">6. Thread Safety Patterns</a>
     <a href="#thread-pool-executor">7. <code>ThreadPoolExecutor</code></a>
+    <a href="#process-pool-executor">8. <code>ProcessPoolExecutor</code></a>
   </nav>
 
   <div class="what-is">
     <span class="label">How to run these</span>
     Download <code>starter.py</code> below and run
-    <code>python3 starter.py</code> from inside the same folder.
+    <code>python3 starter.py</code> (or <code>python starter.py</code>)
+    from inside the same folder. Use a saved local script, not the browser,
+    a REPL, or a notebook: process workers need to import the module.
+    Keep worker definitions at module level and all demo calls inside
+    <code>main()</code>, called under <code>if __name__ == "__main__":</code>.
+    This keeps fresh workers from rerunning the earlier threading demos.
   </div>
 
   <div class="download-links">
@@ -136,10 +143,11 @@
   </div>
 
   <h2 id="the-gil">Topic 3: The GIL</h2>
+  <p>For the simple classifiers, assume one GIL-enabled CPython interpreter and pure-Python CPU work. Include the exceptions in the interview answer.</p>
 
   <div class="task-card">
-    <h3><span class="task-num">1</span> Which operations release the GIL</h3>
-    <p>Find <code>&#35; TODO 3.1</code>. Write <code>gil_releases_during(operation)</code>.</p>
+    <h3><span class="task-num">1</span> Which operations release the GIL while waiting</h3>
+    <p>Find <code>&#35; TODO 3.1</code>. Write <code>gil_releases_during(operation)</code>. A CPU loop is not a blocking wait, but still periodically hands off the GIL.</p>
   </div>
 
   <div class="task-card">
@@ -149,19 +157,19 @@
 
   <div class="task-card debug-card">
     <h3><span class="task-num">3</span> Debug the Code</h3>
-    <p>Find <code>&#35; TODO 3.3</code>. This claims Python threads run fully in parallel on separate cores. Fix it.</p>
+    <p>Find <code>&#35; TODO 3.3</code>. Fix the claim that Python threads sharing an enabled GIL execute bytecode fully in parallel.</p>
   </div>
 
   <div class="scenario-card">
     <span class="scenario-tag">💼 Scenario</span>
     <h3>Explaining the GIL to a teammate</h3>
-    <p>Find <code>&#35; TODO 3.A</code>. Write <code>explain_gil_to_a_teammate()</code>.</p>
+    <p>Find <code>&#35; TODO 3.A</code>. Explain CPU-thread turn-taking rather than starvation, overlapping I/O waits, and separate process interpreters.</p>
   </div>
 
   <div class="scenario-card">
     <span class="scenario-tag">💼 Interview Prep</span>
     <h3>The GIL's practical impact</h3>
-    <p>Find <code>&#35; TODO 3.B</code>. Write <code>explain_gil_interview_answer()</code>.</p>
+    <p>Find <code>&#35; TODO 3.B</code>. Include native code that releases the GIL and optional free-threaded CPython (experimental in 3.13, supported in 3.14). Explain why shared state still needs synchronization.</p>
   </div>
 
   <h2 id="race-conditions">Topic 4: Race Conditions</h2>
@@ -298,6 +306,41 @@
     <span class="scenario-tag">💼 Interview Prep</span>
     <h3>Why <code>ThreadPoolExecutor</code> over raw <code>Thread</code></h3>
     <p>Find <code>&#35; TODO 7.B</code>. Write <code>explain_threadpoolexecutor_benefits()</code>.</p>
+  </div>
+
+  <h2 id="process-pool-executor">Topic 8: <code>ProcessPoolExecutor</code></h2>
+  <p>Run these tasks locally. Small inputs make results easy to check; they are not a speedup benchmark. Workers, arguments, and results must be picklable.</p>
+
+  <div class="task-card">
+    <h3><span class="task-num">1</span> Choosing the right pool</h3>
+    <p>Find <code>&#35; TODO 8.1</code>. Write <code>choose_pool(work_type)</code>: thread pool for I/O, process pool for independent CPU-heavy Python jobs on a GIL-enabled build. Raise <code>ValueError</code> for an unknown label.</p>
+  </div>
+
+  <div class="task-card">
+    <h3><span class="task-num">2</span> Ordered CPU results</h3>
+    <p>Find <code>&#35; TODO 8.2</code>. Write the module-level <code>count_primes(limit)</code> worker and <code>count_all_primes(limits)</code> using a two-worker process pool and <code>.map()</code>. Input <code>[10, 20, 30]</code> should produce <code>[4, 8, 10]</code>; empty input should produce <code>[]</code>.</p>
+  </div>
+
+  <div class="task-card">
+    <h3><span class="task-num">3</span> Futures and failed jobs</h3>
+    <p>Find <code>&#35; TODO 8.3</code>. Use <code>.submit()</code>, <code>as_completed()</code>, and <code>.result()</code> in <code>collect_prime_counts(limits)</code>. Return sorted result and failure lists. For <code>[10, -1, 20]</code>, report <code>[(10, 4), (20, 8)]</code> and <code>[(-1, 'limit must be non-negative')]</code>; do not silently turn a failure into a count of zero.</p>
+  </div>
+
+  <div class="task-card debug-card">
+    <h3><span class="task-num">4</span> Debug the Code: an unpicklable worker</h3>
+    <p>Find <code>&#35; TODO 8.4</code>. Replace the lambda with the existing module-level <code>triple_val</code> function. Call the repaired helper from <code>main()</code>, not at import time.</p>
+  </div>
+
+  <div class="scenario-card">
+    <span class="scenario-tag">💼 Scenario</span>
+    <h3>Missing report results</h3>
+    <p>Find <code>&#35; TODO 8.A</code>. Explain why a process worker's list updates do not update the parent's list, why <code>threading.Lock</code> cannot fix it, and how returning values fixes the design.</p>
+  </div>
+
+  <div class="scenario-card">
+    <span class="scenario-tag">💼 Interview Prep</span>
+    <h3>Why is the process pool slower?</h3>
+    <p>Find <code>&#35; TODO 8.B</code>. Explain process startup, serialization, copying, and memory costs, bounded workers and pool reuse, and end-to-end measurement. Explain why sleeping is not a CPU benchmark.</p>
   </div>
 
   <div class="what-is">

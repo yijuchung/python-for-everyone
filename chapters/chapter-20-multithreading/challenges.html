@@ -54,6 +54,7 @@
     to WebAssembly) &mdash; nothing is uploaded anywhere. Keep the function
     name in the stub exactly as given, since the grader calls it by name.
   </div>
+  <p><code>ProcessPoolExecutor</code> needs real worker processes, which this browser runtime cannot launch. Use the <a href="practice/index.html#process-pool-executor">local process-pool practice</a> for that topic; these eight browser challenges keep their existing scope.</p>
 
   <div class="challenge-card" data-difficulty="Easy">
     <h3><span class="task-num">1</span> Classify I/O-Bound vs. CPU-Bound <span class="badge-difficulty">Easy</span></h3>
@@ -284,9 +285,10 @@ def safe_total(amounts):
   </div>
 
   <div class="challenge-card" data-difficulty="Easy">
-    <h3><span class="task-num">5</span> Does This Operation Release the GIL? <span class="badge-difficulty">Easy</span></h3>
+    <h3><span class="task-num">5</span> Does This Operation Release the GIL While Waiting? <span class="badge-difficulty">Easy</span></h3>
     <div class="challenge-statement">
       <p>Write a function <code>gil_releases_for(operation)</code> that returns <code>True</code> if <code>operation</code> is one of <code>"sleep"</code>, <code>"network_call"</code>, <code>"file_read"</code>, <code>"database_query"</code>, or <code>"download"</code> (I/O operations that release the GIL while waiting), and <code>False</code> otherwise.</p>
+      <p>This is a classification exercise assuming GIL-enabled CPython, not a runtime GIL probe. <code>False</code> means the label is not one of these blocking waits; CPU-bound Python threads still periodically hand off the GIL.</p>
       <div class="constraints">
         <strong>Constraints:</strong> <code>operation</code> is always a string.
       </div>
