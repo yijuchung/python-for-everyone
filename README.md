@@ -119,7 +119,9 @@ python-for-everyone/
 
 Every chapter page is fully cross-linked: lesson → quiz → exercises →
 interview questions → project → back to all chapters, plus a top-nav
-Roadmap link on every page.
+Roadmap link on every page. The left chapter panel automatically expands
+only the current chapter's subtopics and its module, keeping that chapter
+in view when navigating between pages or using browser Back/Forward.
 
 ## Running the Python exercises locally
 
