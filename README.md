@@ -125,6 +125,15 @@ in view when navigating between pages or using browser Back/Forward.
 
 ## Running the Python exercises locally
 
+**Latest stable Python: [3.15.0](https://www.python.org/downloads/release/python-3150/)**
+(released October 9, 2026; checked October 14, 2026). This is a release
+reference, not a new minimum version or a claim that all course dependencies
+have been tested on 3.15. The in-browser playground uses a separately pinned
+Pyodide runtime and does not automatically gain new Python features.
+
+See [Python version notes and proposed course additions](docs/PYTHON_VERSION_NOTES.md)
+for researched 3.15 features, relevant 3.14 gaps, and compatibility guidance.
+
 ```bash
 git clone https://github.com/TechNaom/python-for-everyone.git
 cd python-for-everyone
